@@ -12,27 +12,25 @@ from leon_home.contracts import ReleaseError, Site, read_json  # noqa: E402
 from leon_home.install import install, preflight, support_key  # noqa: E402
 
 MESSAGES = {
-    'existingInstallation': 'Esta Raspberry ya tiene una instalación. No la sobrescribimos. Si una instalación nueva se interrumpió, repite exactamente el mismo paquete con --resume.',
-    'incompatible': 'Necesitas Raspberry Pi OS Lite de 64 bits basado en Debian 13.',
-    'invalidSignature': 'La firma o la huella de la clave no coinciden. Detén la instalación y revisa el paquete con quien te ayuda.',
-    'missingPrerequisite': 'Falta un requisito: instala Pi-hole v6, Tailscale, Unbound, nftables y OpenSSL según el manual.',
-    'wrongTailnet': 'Tailscale debe estar conectado con la cuenta del dueño de esta casa, sin etiquetas de dispositivo.',
-    'missingInterface': 'No encontramos una dirección IPv4 en la conexión Ethernet seleccionada.',
-    'incompatibleSubnet': 'La red no cumple los límites del inventario. Pide ayuda antes de continuar.',
-    'invalidSupportKey': 'La llave de soporte debe ser una llave pública Ed25519 válida.',
-    'rootRequired': 'Para instalar, ejecuta este asistente con sudo.',
-    'invalidPassword': 'La contraseña de aplicación de Pi-hole no tiene un formato válido.',
+    'existingInstallation': 'This Pi already has an installation. To resume an interrupted new setup, use the exact same bundle with --resume.',
+    'incompatible': 'You need 64-bit Raspberry Pi OS Lite based on Debian 13.',
+    'invalidSignature': 'The signature or key fingerprint does not match. Stop setup and review the bundle with your support person.',
+    'missingPrerequisite': 'A prerequisite is missing. Follow the guide to install Pi-hole v6, Tailscale, Unbound, nftables and OpenSSL.',
+    'wrongTailnet': 'Tailscale must be connected with the owner account for this household, without device tags.',
+    'missingInterface': 'No IPv4 address was found on the selected Ethernet interface.',
+    'incompatibleSubnet': 'This network is outside the inventory limits. Ask for help before continuing.',
+    'invalidSupportKey': 'The support key must be a valid Ed25519 public key.',
+    'rootRequired': 'Run this setup assistant with sudo to install.',
+    'invalidPassword': 'The Pi-hole application password has an invalid format.',
 }
 
 
 def wizard(repository):
-    print('LEÓN Home · Una Raspberry para tu casa\n')
-    owner = input('Correo de la cuenta Tailscale del dueño: ').strip().lower()
-    support = (
-        input('Correo Tailscale del responsable de soporte (vacío para omitir): ').strip().lower()
-    )
-    hostname = input('Nombre para esta Raspberry [leon-casa]: ').strip() or 'leon-casa'
-    interface = input('Interfaz Ethernet [eth0]: ').strip() or 'eth0'
+    print('LEÓN Home · A Raspberry Pi for your home\n')
+    owner = input('Owner Tailscale account login: ').strip().lower()
+    support = input('Support Tailscale login (leave empty to skip): ').strip().lower()
+    hostname = input('Hostname for this Pi [leon-casa]: ').strip() or 'leon-casa'
+    interface = input('Ethernet interface [eth0]: ').strip() or 'eth0'
     return {
         'schemaVersion': 1,
         'owner': owner,
@@ -63,18 +61,16 @@ def main():
         public = support_key(options.support_key) if options.support_key else None
         if site.support_login and public is None:
             raise ReleaseError('invalidSupportKey')
-        print(f'Paquete verificado: LEÓN Home {candidate["version"]}.')
+        print(f'Verified bundle: LEÓN Home {candidate["version"]}.')
         print(
-            'Plan: panel privado, inventario, DNS protegido y actualizaciones con tu aprobación.\nEl router, DHCP y DNS de tus otros dispositivos requieren una configuración posterior y separada.'
+            'Plan: private panel, inventory, scoped DNS and owner-approved updates.\nRouter, DHCP and other device DNS settings require separate configuration.'
         )
         if not options.apply:
-            print(
-                'Comprobación terminada. No se hicieron cambios. Añade --apply cuando estés listo.'
-            )
+            print('Checks complete. No changes were made. Add --apply when ready to install.')
             return
         if os.geteuid() != 0:
             raise ReleaseError('rootRequired')
-        password = getpass.getpass('Contraseña de APLICACIÓN de Pi-hole (no se mostrará): ')
+        password = getpass.getpass('Pi-hole APPLICATION password (not displayed): ')
         install(
             site,
             value,
@@ -88,18 +84,18 @@ def main():
         )
         password = ''
         print(
-            'Instalación terminada. Abre la dirección HTTPS de esta Raspberry desde tu teléfono con Tailscale.\nContinúa con la prueba DNS de un equipo y las reglas de acceso del manual.'
+            'Setup complete. Open the HTTPS address of this Pi from your phone with Tailscale connected.\nContinue with the single-device DNS test and access rules in the guide.'
         )
     except ReleaseError as error:
         raise SystemExit(
             MESSAGES.get(
                 error.code,
-                'No pudimos completar la instalación. Conserva el paquete y revisa el manual con quien te ayuda.',
+                'Setup could not finish. Keep the bundle and review the guide with your support person.',
             )
         ) from None
     except (OSError, ValueError, KeyError):
         raise SystemExit(
-            'La comprobación o instalación se interrumpió. Revisa los requisitos y el manual antes de repetir.'
+            'The check or installation was interrupted. Review the prerequisites and guide before retrying.'
         ) from None
 
 

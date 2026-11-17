@@ -19,12 +19,12 @@ export function createDeviceControls({
     $('#rename-status').textContent = '';
   }
   const RENAME_OUTCOMES = {
-    saved: ['good', 'Guardado. El nombre en la red (Pi-hole) se actualiza en segundos. Vacío vuelve al nombre de la Pi.'],
-    unknownDevice: ['warn', 'El escaneo aún no tiene la dirección física de este equipo.'],
-    forbidden: ['warn', 'Sesión de la página caducada. Recarga.'],
-    invalid: ['warn', 'Nombre no válido.'],
-    unavailable: ['warn', 'No se pudo guardar.'],
-    network: ['warn', 'Sin conexión con LEÓN Home.'],
+    saved: ['good', 'Saved. The Pi-hole name updates in seconds. Leave empty to use the default name from the Pi.'],
+    unknownDevice: ['warn', 'The scan has not found the MAC address of this device yet.'],
+    forbidden: ['warn', 'Your page session expired. Reload to continue.'],
+    invalid: ['warn', 'Invalid name.'],
+    unavailable: ['warn', 'Could not save.'],
+    network: ['warn', 'LEÓN Home could not be reached.'],
   } satisfies Record<string, Feedback>;
   $('#rename', HTMLFormElement).addEventListener('submit', event => {
     void rename(event);
@@ -56,21 +56,21 @@ export function createDeviceControls({
   let pausePending: { id: string; paused: boolean } | null = null;
   let pauseOutcome: { id: string; status: string } | null = null;
   const PAUSE_OUTCOMES = {
-    applied: ['good', 'Hecho: el router confirma el cambio.'],
-    unchanged: ['good', 'Ya estaba así.'],
-    unverified: ['warn', 'No se pudo confirmar. Revisa el estado antes de repetir.'],
-    filterUnavailable: ['warn', 'Activa "Lista negra" en el filtro MAC del router.'],
-    protectedDevice: ['warn', 'Equipo protegido: no se puede pausar desde LEÓN.'],
-    wiredDevice: ['warn', 'Está por cable: el filtro Wi-Fi no lo pausa.'],
-    filterFull: ['warn', 'La lista del router está llena (32).'],
-    unknownDevice: ['warn', 'El router no ve este equipo ahora.'],
-    locked: ['warn', 'Sesión del router bloqueada.'],
-    busy: ['warn', 'Espera unos segundos entre cambios.'],
-    rejected: ['warn', 'El router no aceptó el cambio.'],
-    forbidden: ['warn', 'Sesión de la página caducada. Recarga.'],
-    unavailable: ['warn', 'El monitor del router no responde.'],
-    invalid: ['warn', 'Solicitud no válida.'],
-    network: ['warn', 'Sin conexión con LEÓN Home.'],
+    applied: ['good', 'Done. The router confirmed the change.'],
+    unchanged: ['good', 'Already set.'],
+    unverified: ['warn', 'The result could not be confirmed. Check the state before trying again.'],
+    filterUnavailable: ['warn', 'Enable blocklist mode in the router MAC filter.'],
+    protectedDevice: ['warn', 'Protected device. LEÓN cannot pause it.'],
+    wiredDevice: ['warn', 'This device is wired. The Wi-Fi filter cannot pause it.'],
+    filterFull: ['warn', 'The router blocklist is full (32 entries).'],
+    unknownDevice: ['warn', 'The router does not currently see this device.'],
+    locked: ['warn', 'The router session is locked.'],
+    busy: ['warn', 'Wait a few seconds between changes.'],
+    rejected: ['warn', 'The router did not accept the change.'],
+    forbidden: ['warn', 'Your page session expired. Reload to continue.'],
+    unavailable: ['warn', 'The router monitor is not responding.'],
+    invalid: ['warn', 'Invalid request.'],
+    network: ['warn', 'LEÓN Home could not be reached.'],
   } satisfies Record<string, Feedback>;
   function renderPause(device: Device | undefined) {
     const row = $('#pause-row'),
@@ -84,7 +84,7 @@ export function createDeviceControls({
     else toggle.removeAttribute('aria-busy');
     toggle.disabled = Boolean(pausePending) || !getState()?.actionToken;
     const outcome = pauseOutcome?.id === device.id ? feedbackFor(PAUSE_OUTCOMES, pauseOutcome.status, 'invalid') : null;
-    note.textContent = pending ? 'Aplicando…' : outcome ? outcome[1] : device.paused ? 'Pausado: sin Wi-Fi hasta reanudar' : 'Permitido · Wi-Fi';
+    note.textContent = pending ? 'Applying…' : outcome ? outcome[1] : device.paused ? 'Paused. Wi-Fi is blocked until resumed' : 'Allowed · Wi-Fi';
     note.className = pending ? '' : outcome ? outcome[0] : '';
   }
   $('#pause-switch', HTMLInputElement).addEventListener('change', () => {
@@ -98,11 +98,10 @@ export function createDeviceControls({
       return;
     }
     const dialog = $('#confirm', HTMLDialogElement);
-    $('#confirm-title').textContent = '¿Pausar ' + device.name + '?';
-    $('#confirm-text').textContent =
-      'Se desconecta del Wi-Fi y no podrá volver a unirse hasta que lo reanudes. Se aplica a su dirección física actual: un equipo con dirección privada rotativa podría volver con otra.';
+    $('#confirm-title').textContent = 'Pause ' + device.name + '?';
+    $('#confirm-text').textContent = 'The device will lose Wi-Fi access until you resume it. This applies to its current MAC address; a rotating private address may bypass it.';
     const ok = $('#confirm-ok', HTMLButtonElement);
-    ok.textContent = 'Pausar';
+    ok.textContent = 'Pause';
     ok.className = 'danger';
     ok.onclick = () => {
       dialog.close();
@@ -129,26 +128,26 @@ export function createDeviceControls({
     pausePending = null;
     onInspect();
   }
-  // Weekly pause window, opt-in per device: off by default; nothing applies until "Guardar horario".
+  // Weekly pause window, opt-in per device: off by default; nothing applies until "Save schedule".
   // Days are Monday-first like the Pi (Mon=0); times are the Pi's local time. Static markup, so refreshes
   // never discard an edit in progress.
-  const DAY_LABELS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'] as const,
-    DAY_NAMES = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+  const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as const,
+    DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   let schedEditing: string | null = null;
   for (const [index, label] of DAY_LABELS.entries()) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = label;
     button.dataset.day = String(index);
-    button.setAttribute('aria-label', DAY_NAMES[index] ?? 'día');
+    button.setAttribute('aria-label', DAY_NAMES[index] ?? 'day');
     button.setAttribute('aria-pressed', 'false');
     button.addEventListener('click', () => button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') !== 'true')));
     $('#sched-days').append(button);
   }
   function scheduleText(schedule: Schedule) {
     const days = schedule.days;
-    const label = days.length === 7 ? 'Todos los días' : days.join() === '0,1,2,3,4' ? 'L–V' : days.join() === '5,6' ? 'Fin de semana' : days.map(day => DAY_LABELS[day]).join(' ');
-    return `${label} · ${schedule.start} → ${schedule.end}${schedule.end < schedule.start ? ' (día siguiente)' : ''}`;
+    const label = days.length === 7 ? 'Every day' : days.join() === '0,1,2,3,4' ? 'Mon–Fri' : days.join() === '5,6' ? 'Weekend' : days.map(day => DAY_LABELS[day]).join(' ');
+    return `${label} · ${schedule.start} → ${schedule.end}${schedule.end < schedule.start ? ' (next day)' : ''}`;
   }
   function fillEditor(schedule: Schedule | null) {
     for (const button of $('#sched-days').querySelectorAll<HTMLButtonElement>('button'))
@@ -176,10 +175,10 @@ export function createDeviceControls({
     $('#sched-edit').hidden = !saved || editing;
     summary.className = saved && !editing ? 'good' : '';
     summary.textContent = editing
-      ? 'Elige días y horas (hora de la Pi). Nada se aplica hasta guardar.'
+      ? 'Choose days and times in the local time on the Pi. Nothing applies until you save.'
       : saved
-        ? `Activa: ${scheduleText(saved)}. Pausa al empezar y reanuda al terminar.`
-        : 'Desactivada: LEÓN no pausa este equipo por horario.';
+        ? `Active: ${scheduleText(saved)}. Pauses at the start and resumes at the end.`
+        : 'Disabled. LEÓN will not pause this device on a schedule.';
   }
   function selectedDevice() {
     return getState()?.devices.find(item => item.id === getSelectedID());
@@ -191,14 +190,14 @@ export function createDeviceControls({
     renderSchedule(device);
   }
   const SCHEDULE_OUTCOMES = {
-    saved: ['good', 'Horario guardado. Si ya está dentro del horario, se aplica desde el próximo inicio o fin.'],
-    cleared: ['good', 'Horario quitado. Su estado actual no cambia: si está pausado, sigue así hasta que lo reanudes.'],
-    protectedDevice: ['warn', 'Equipo protegido: no se puede programar.'],
-    unknownDevice: ['warn', 'El escaneo aún no tiene la dirección física de este equipo.'],
-    invalid: ['warn', 'Elige al menos un día y dos horas distintas.'],
-    forbidden: ['warn', 'Sesión de la página caducada. Recarga.'],
-    unavailable: ['warn', 'No se pudo guardar.'],
-    network: ['warn', 'Sin conexión con LEÓN Home.'],
+    saved: ['good', 'Schedule saved. If the window has already started, it applies at the next start or end.'],
+    cleared: ['good', 'Schedule removed. Its current state is unchanged. A paused device stays paused until resumed.'],
+    protectedDevice: ['warn', 'Protected device. A schedule cannot be set.'],
+    unknownDevice: ['warn', 'The scan has not found the MAC address of this device yet.'],
+    invalid: ['warn', 'Choose at least one day and two different times.'],
+    forbidden: ['warn', 'Your page session expired. Reload to continue.'],
+    unavailable: ['warn', 'Could not save.'],
+    network: ['warn', 'LEÓN Home could not be reached.'],
   } satisfies Record<string, Feedback>;
   function scheduleStatus(result: string) {
     const [tone, message] = feedbackFor(SCHEDULE_OUTCOMES, result, 'invalid');

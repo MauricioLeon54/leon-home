@@ -1,5 +1,5 @@
 import type { Connection, ControlContext, Device, Traffic } from './contracts.js';
-const CONNECTION_NAMES = { ethernet: 'Ethernet', wifi: 'Wi-Fi', other: 'Otra', unknown: 'Sin identificar' } satisfies Record<Connection, string>;
+const CONNECTION_NAMES = { ethernet: 'Ethernet', wifi: 'Wi-Fi', other: 'Other', unknown: 'Unidentified' } satisfies Record<Connection, string>;
 interface Point {
   x: number;
   y: number;
@@ -66,7 +66,7 @@ export function createMapView({ getState, scanCurrent, trafficCurrent, refresh, 
     const line = document.createElement('small');
     line.className = 'rates';
     if (!trafficCurrent() || !traffic) {
-      line.textContent = 'Tráfico sin lectura actual';
+      line.textContent = 'No current traffic reading';
       return line;
     }
     line.append(text('b', '↓ ' + mbps(traffic.downloadRouterMbps), 'd'), text('b', '↑ ' + mbps(traffic.uploadRouterMbps) + ' Mbps', 'u'));
@@ -86,8 +86,8 @@ export function createMapView({ getState, scanCurrent, trafficCurrent, refresh, 
     hub.style.left = hubAt.x + 'px';
     hub.style.top = hubAt.y + 'px';
     const hubTitle = document.createElement('strong');
-    hubTitle.append(text('span', 'Red local'));
-    hub.append(hubTitle, text('small', state.devices.length + ' dispositivos en inventario'));
+    hubTitle.append(text('span', 'Local network'));
+    hub.append(hubTitle, text('small', state.devices.length + ' devices in inventory'));
     nodes.append(hub);
     state.devices.forEach((device, index) => {
       if (!positions.has(device.id)) positions.set(device.id, defaultPosition(index));
@@ -106,21 +106,21 @@ export function createMapView({ getState, scanCurrent, trafficCurrent, refresh, 
       node.style.top = position.y + 'px';
       const title = document.createElement('strong');
       title.append(icon(device.traffic?.connection), text('span', device.name));
-      if (device.isNew) title.append(text('em', 'Nuevo', 'badge-new'));
-      if (device.paused) title.append(text('em', 'Pausado', 'badge-paused'));
+      if (device.isNew) title.append(text('em', 'New', 'badge-new'));
+      if (device.paused) title.append(text('em', 'Paused', 'badge-paused'));
       const seen = scanCurrent() && device.presence === 'seen',
         presence = document.createElement('small'),
         dot = document.createElement('i');
       const known = scanCurrent() && (seen || device.presence === 'notSeen');
       dot.className = 'dot ' + (!known ? 'hollow' : seen ? 'ok' : '');
-      presence.append(dot, !scanCurrent() ? 'Sin lectura actual' : !known ? 'Desconocido' : seen ? 'Visto' : 'No visto');
+      presence.append(dot, !scanCurrent() ? 'No current reading' : !known ? 'Unknown' : seen ? 'Seen' : 'Not seen');
       node.append(title, text('small', device.address), presence, rateLine(device.traffic));
       nodes.append(node);
     });
     const empty = $('.empty');
     empty.hidden = state.devices.length > 0;
-    empty.textContent = 'Todavía no hay dispositivos en la lectura. Comprueba el servicio de escaneo.';
-    $('.status').textContent = `${scanCurrent() ? 'Último escaneo' : 'Escaneo sin lectura actual'} · ${date(getState()?.observedAt)}${getState()?.truncated ? ' · limitado a 64 dispositivos' : ''}`;
+    empty.textContent = 'No devices have been observed yet. Check the inventory service.';
+    $('.status').textContent = `${scanCurrent() ? 'Latest scan' : 'No current scan reading'} · ${date(getState()?.observedAt)}${getState()?.truncated ? ' · limited to 64 devices' : ''}`;
     transform();
     inspect();
     if (focused) [...nodes.querySelectorAll('button')].find(node => node.dataset.id === focused)?.focus({ preventScroll: true });
@@ -130,33 +130,33 @@ export function createMapView({ getState, scanCurrent, trafficCurrent, refresh, 
       details = $('#details');
     details.replaceChildren();
     $('#inspector').classList.toggle('open', Boolean(device));
-    $('#title').textContent = device ? device.name : 'Dispositivos de casa';
-    $('#description').textContent = device ? 'Última observación de LEÓN Home.' : 'Toca un dispositivo para ver su detalle. Arrastra para ordenar el mapa.';
+    $('#title').textContent = device ? device.name : 'Home devices';
+    $('#description').textContent = device ? 'Latest observation from LEÓN Home.' : 'Select a device for details. Drag to arrange the map.';
     const chart = $('#device-chart', SVGSVGElement);
     chart.toggleAttribute('hidden', !device);
     controls.renderRename(device);
     controls.renderPause(device);
     controls.renderSchedule(device);
     if (!device) return;
-    const presence = !scanCurrent() ? 'Desconocida' : device.presence === 'seen' ? 'Visto en el escaneo' : device.presence === 'notSeen' ? 'No visto en el escaneo' : 'Desconocida';
+    const presence = !scanCurrent() ? 'Unknown' : device.presence === 'seen' ? 'Seen in the scan' : device.presence === 'notSeen' ? 'Not seen in the scan' : 'Unknown';
     const current = trafficCurrent(),
       traffic = device.traffic;
     for (const [label, value] of [
-      ['Dirección', device.address],
-      ['Presencia', presence],
-      ['Última vez visto', date(device.lastSeen)],
-      ['Tipo', device.role || device.kind || 'Sin identificar'],
-      ['Conexión (router)', traffic ? CONNECTION_NAMES[traffic.connection] : 'Sin identificar'],
-      ['Puerto Ethernet', 'Sin asociación verificada'],
-      ['Bajada', current && traffic ? mbps(traffic.downloadRouterMbps) + ' Mbps' : 'Sin lectura actual'],
-      ['Subida', current && traffic ? mbps(traffic.uploadRouterMbps) + ' Mbps' : 'Sin lectura actual'],
+      ['Address', device.address],
+      ['Presence', presence],
+      ['Last seen', date(device.lastSeen)],
+      ['Tipo', device.role || device.kind || 'Unidentified'],
+      ['Connection (router)', traffic ? CONNECTION_NAMES[traffic.connection] : 'Unidentified'],
+      ['Ethernet port', 'No verified association'],
+      ['Download', current && traffic ? mbps(traffic.downloadRouterMbps) + ' Mbps' : 'No current reading'],
+      ['Upload', current && traffic ? mbps(traffic.uploadRouterMbps) + ' Mbps' : 'No current reading'],
       ...(current && traffic?.band
         ? [
-            ['Banda Wi-Fi', bandName(traffic.band)],
-            ['Señal', signalText(traffic.signalDbm)],
+            ['Wi-Fi band', bandName(traffic.band)],
+            ['Signal', signalText(traffic.signalDbm)],
           ]
         : []),
-      ...(device.isNew ? [['Novedad', 'Visto por primera vez en las últimas 24 h']] : []),
+      ...(device.isNew ? [['New device', 'First seen in the last 24 hours']] : []),
     ])
       details.append(text('dt', label), text('dd', value));
     drawChart(

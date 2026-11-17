@@ -1,27 +1,24 @@
 <main class="updates">
-  <a class="back" href="/">Volver a inicio</a>
+  <a class="back" href="/">Back to home</a>
   <img class="release-mark" src="/brand/symbol.png" alt="LEÓN Home" />
-  <h1>Tu red, al día.</h1>
-  <p class="intro">Las mejoras llegan aquí. Tú decides cuándo instalarlas.</p>
+  <h1>Your network, up to date.</h1>
+  <p class="intro">New improvements arrive here. You choose when to install them.</p>
   <section class="release" aria-labelledby="release-title">
-    <p id="release-status" role="status" aria-live="polite">Consultando tu Raspberry…</p>
-    <h2 id="release-title">Actualizaciones</h2>
+    <p id="release-status" role="status" aria-live="polite">Checking your Pi…</p>
+    <h2 id="release-title">Updates</h2>
     <p id="release-version"></p>
     <ul id="release-notes"></ul>
-    <p id="release-message">Pi-hole seguirá funcionando mientras se actualiza el panel.</p>
+    <p id="release-message">Pi-hole keeps running while the panel updates.</p>
     <div class="release-actions">
-      <button id="release-apply" hidden>Aceptar e instalar</button
-      ><button id="release-check">Buscar actualizaciones</button>
+      <button id="release-apply" hidden>Accept and install</button><button id="release-check">Check for updates</button>
     </div>
   </section>
-  <p class="small muted">
-    Esta página actualiza LEÓN Home. Las actualizaciones del sistema y de Pi-hole se revisan por separado.
-  </p>
+  <p class="small muted">This page updates LEÓN Home. System and Pi-hole updates are maintained separately.</p>
   <dialog id="release-confirm">
-    <h2>¿Instalar la actualización?</h2>
-    <p>El panel se reiniciará brevemente. Guardaremos la versión anterior para recuperarla si algo falla.</p>
+    <h2>Install this update?</h2>
+    <p>The panel will restart briefly. We keep the previous version for recovery if a check fails.</p>
     <div class="release-actions">
-      <button id="release-confirm-yes">Instalar ahora</button><button id="release-confirm-no">Más tarde</button>
+      <button id="release-confirm-yes">Install now</button><button id="release-confirm-no">Later</button>
     </div>
   </dialog>
 </main>

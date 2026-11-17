@@ -1,39 +1,70 @@
+<p align="center">
+  <img src="docs/assets/readme-header.png" alt="LEÓN Home — Your home network, in view." width="100%" />
+</p>
+
+<p align="center">
+  <a href="sharing/guides/INSTALL.md">Installation</a> &nbsp; · &nbsp;
+  <a href="https://github.com/MauricioLeon54/leon-home/releases/latest">Download</a> &nbsp; · &nbsp;
+  <a href="sharing/guides/TAILSCALE.md">Remote support</a> &nbsp; · &nbsp;
+  <a href="sharing/guides/UPDATES.md">Updates and recovery</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/MauricioLeon54/leon-home/actions/workflows/checks.yml">
+    <img src="https://github.com/MauricioLeon54/leon-home/actions/workflows/checks.yml/badge.svg" alt="Build and verification status" />
+  </a>
+</p>
+
 # LEÓN Home
 
-Pi-hole, un panel privado desde el teléfono y un inventario de red para una Raspberry Pi 4 de 2 GB.
-Cada casa conserva su propia cuenta de Tailscale, configuración y credenciales. No necesitas
-una aplicación de Mac para usarlo.
+A private home network dashboard for Raspberry Pi. See your devices, check Pi-hole filtering
+and keep an eye on your Pi from your phone, at home or away.
 
-La primera instalación se hace acompañado por una persona de soporte. Después puedes consultar
-el panel y aceptar las nuevas versiones desde el teléfono. Las actualizaciones de aplicación
-están firmadas, conservan configuración y guardan una versión anterior para recuperación.
+Each household owns its Tailscale account, configuration and credentials. Setup is guided;
+everyday use happens in the browser. No Mac app is required.
 
-- [Instalación acompañada](sharing/guides/INSTALL-ES.md)
-- [Tailscale y soporte limitado](sharing/guides/TAILSCALE-ES.md)
-- [Actualizaciones y recuperación](sharing/guides/UPDATES-ES.md)
+## A clear view of home
 
-Las guías están en `sharing/guides/` en el repositorio. Esta es la distribución independiente;
-no contiene el historial del laboratorio personal, la app de Mac ni inventarios reales.
+| Capability             | What you get                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------- |
+| Private dashboard      | Phone access through Tailscale Serve without public port forwarding.                                |
+| DNS filtering          | Pi-hole statistics and controls with encrypted upstream DNS through Unbound.                        |
+| Network inventory      | An interactive map with observation times and a prebuilt Rust discovery engine.                     |
+| Owner-approved updates | Signed releases, explicit installation approval, health checks and a previous version for recovery. |
+| Scoped support         | Access to one Pi through a dedicated SSH key and a small set of maintenance commands.               |
 
-## Alcance inicial
+The map represents observed devices, not guaranteed physical wiring. Traffic readings and port
+controls depend on verified router capabilities and are unavailable until configured for that
+installation. Pi-hole filters DNS; it does not block every advertisement or secure all browsing.
 
-Objetivo: Raspberry Pi OS Lite de 64 bits, Debian 13, Pi-hole v6 y Tailscale. El instalador rechaza
-una instalación LEÓN existente para evitar sobrescribir otra casa. El panel es privado mediante
-Tailscale Serve; no requiere puertos públicos, Funnel ni un servidor web en Internet.
+## Start with one Pi
 
-El mapa muestra observaciones, no una topología física garantizada. Medir tráfico o cambiar
-puertos depende de cada router y no se habilita automáticamente. Pi-hole filtra DNS y no puede
-bloquear todos los anuncios ni proteger por sí solo toda la navegación.
+The initial target is a **Raspberry Pi 4 with 2 GB RAM**, Ethernet and **64-bit Raspberry Pi OS
+Lite based on Debian 13**, with Pi-hole v6 and Tailscale.
 
-Las actualizaciones normales cubren la aplicación y el inventario. Pi-hole, el sistema operativo,
-Tailscale y la base privilegiada de verificación tienen mantenimiento separado. Conservar la
-versión previa no sustituye un respaldo externo ni una fuente de alimentación estable.
+1. Prepare the Pi and its owner's Tailscale account.
+2. Verify the signed release and run guided setup with your support person.
+3. Open the private panel on your phone and test DNS on one device before expanding its use.
 
-## Desarrollo
+Follow the [installation guide](sharing/guides/INSTALL.md) for prerequisites, signature
+verification and recovery steps. Setup refuses to overwrite an existing LEÓN installation.
 
-Necesitas Node 24+, pnpm 12.15.0, Python 3.13+, Ruff y Rust según `rust/leon-netmap/rust-toolchain.toml`.
-La firma de publicaciones la hace el mantenedor con su clave local; las pruebas generan llaves
-temporales y nunca usan una clave de producción.
+## Updates on your terms
+
+When a compatible release is available, open **Updates** to review the changes and choose
+**Accept and install**. Downloading an update never accepts it on your behalf.
+
+Application updates preserve household configuration and retain the previous version. The
+operating system, Pi-hole, Tailscale and privileged updater base have separate maintenance
+procedures. A previous version is not a replacement for an external backup.
+
+Read [updates and recovery](sharing/guides/UPDATES.md) and
+[sharing one Pi for support](sharing/guides/TAILSCALE.md).
+
+## Development
+
+Use Node.js 24+, pnpm 12.15.0, Python 3.13+ and the Rust toolchain pinned in
+`rust/leon-netmap/rust-toolchain.toml`. Development tools run on your computer, not the deployed Pi.
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts
@@ -45,13 +76,15 @@ pnpm build:netmap
 ./sharing/test-linux.sh
 ```
 
-`pnpm build:netmap` requiere un host Docker ARM64 y construye fuera de la Raspberry de uso diario.
-Para crear una publicación firmada consulta el manual de actualizaciones. `PUBLIC-EXPORT.json`
-registra el contenido de la exportación inicial revisada; no contiene datos de una instalación.
+The ARM64 build and disposable installation tests require an ARM64 Docker host. Local and CI
+checks cover strict TypeScript, ESLint, Prettier, Ruff, Rust, browser behavior, signatures and
+owner authorization. Installation tests use real Unix service identities with simulated system
+management and external Pi-hole/Tailscale commands. Real hardware, account enrollment, DNS and
+power recovery are verified during guided setup.
 
-## Estado de la primera versión
+Releases are signed with the maintainer's local key; tests generate temporary keys. See the
+[maintainer guide](sharing/guides/UPDATES.md) before publishing.
 
-Versión inicial para instalación acompañada. Se comprueba en navegadores y en Debian ARM64
-con instalación y actualización aisladas. La vinculación real de Tailscale, el DNS de cada casa
-y la recuperación del hardware se verifican durante la instalación; no se clonan de otra casa.
-El acceso de soporte no sustituye una cuenta administrativa de recuperación del dueño.
+This is the independent household distribution. Personal lab history, device inventories and
+household credentials are excluded. `PUBLIC-EXPORT.json` records the reviewed initial export;
+it is not a live source manifest. See [brand guidelines](docs/BRAND.md) for the visual identity.

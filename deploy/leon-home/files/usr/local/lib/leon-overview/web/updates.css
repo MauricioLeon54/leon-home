@@ -18,7 +18,8 @@
 }
 .updates h1 {
   font-size: clamp(2.2rem, 8vw, 3.8rem);
-  letter-spacing: -0.055em;
+  letter-spacing: -0.03em;
+  word-spacing: 0.06em;
   line-height: 1.06;
   margin: 0 0 1rem;
 }
@@ -38,7 +39,8 @@
 .release h2 {
   margin: 0.8rem 0;
   font-size: 1.7rem;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.02em;
+  word-spacing: 0.04em;
 }
 #release-status,
 #release-version {

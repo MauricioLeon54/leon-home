@@ -124,8 +124,8 @@ for (const browserType of [chromium, webkit]) {
         assert.equal(await page.locator('#device-list li').count(), 1);
         await page.locator('a[data-tab=ports]').click();
         await page.locator('#view-ports.active').waitFor();
-        assert.equal(await page.getByRole('switch', { name: 'WAN activado' }).isDisabled(), true);
-        await page.getByRole('switch', { name: 'Puerto 1 activado' }).click();
+        assert.equal(await page.getByRole('switch', { name: 'WAN enabled' }).isDisabled(), true);
+        await page.getByRole('switch', { name: 'Port 1 enabled' }).click();
         await page.locator('#confirm[open]').waitFor();
         await page.locator('#confirm-cancel').click();
         assert.deepEqual(mutations, []);
@@ -140,7 +140,7 @@ for (const browserType of [chromium, webkit]) {
       await page.reload();
       await page.locator('#locked:visible').waitFor();
       await page.locator('button.node').click();
-      assert.match(await page.locator('#details').innerText(), /Sin lectura actual/);
+      assert.match(await page.locator('#details').innerText(), /No current reading/);
       assert.deepEqual(mutations, []);
     });
   });
@@ -149,7 +149,7 @@ for (const browserType of [chromium, webkit]) {
     await withPage(browserType, { width: 1100, height: 850 }, async ({ page, data, mutations }) => {
       data.devices[0].id = 'invalid';
       await page.locator('html').evaluate(element => element.ownerDocument.dispatchEvent(new Event('visibilitychange')));
-      await page.getByText('Sin conexión · datos anteriores', { exact: true }).waitFor();
+      await page.getByText('Offline · previous readings', { exact: true }).waitFor();
       assert.equal(await page.locator('button.node').count(), 1);
       await page.locator('a[data-tab=ports]').click();
       assert.equal(await page.locator('#view-ports [role=switch]:not(:disabled)').count(), 0);

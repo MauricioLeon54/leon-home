@@ -21,7 +21,7 @@ for (const browserType of [chromium, webkit]) {
       phase: 'ready',
       error: null,
       actionToken: 'fixture-token',
-      available: { version: '1.1.0', notes: ['<img src=x onerror=alert(1)>', 'Mejoras de estabilidad.'] },
+      available: { version: '1.1.0', notes: ['<img src=x onerror=alert(1)>', 'Stability improvements.'] },
     };
     page.on('pageerror', error => errors.push(error.message));
     await page.route('https://leon.test/**', async route => {
@@ -49,16 +49,16 @@ for (const browserType of [chromium, webkit]) {
     });
     try {
       await page.goto('https://leon.test/updates');
-      await page.getByText('Hay una actualización', { exact: true }).waitFor();
+      await page.getByText('An update is available', { exact: true }).waitFor();
       assert.equal(await page.locator('#release-notes img').count(), 0);
-      await page.getByRole('button', { name: 'Aceptar e instalar' }).click();
-      await page.getByRole('button', { name: 'Más tarde' }).click();
+      await page.getByRole('button', { name: 'Accept and install' }).click();
+      await page.getByRole('button', { name: 'Later' }).click();
       assert.deepEqual(mutations, []);
       await page.screenshot({ path: `test-results/updates-${browserType.name()}-390.png`, fullPage: true });
       assert.equal(await page.locator('html').evaluate(element => element.scrollWidth <= element.ownerDocument.defaultView.innerWidth), true);
-      await page.getByRole('button', { name: 'Aceptar e instalar' }).click();
-      await page.getByRole('button', { name: 'Instalar ahora' }).click();
-      await page.getByText('Todo está actualizado', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Accept and install' }).click();
+      await page.getByRole('button', { name: 'Install now' }).click();
+      await page.getByText('Everything is up to date', { exact: true }).waitFor();
       assert.deepEqual(mutations, [{ path: '/updates/apply', body: { version: '1.1.0' }, token: 'fixture-token' }]);
       assert.deepEqual(errors, []);
     } finally {

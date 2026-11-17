@@ -66,7 +66,7 @@ class ReleaseFixture(unittest.TestCase):
             'sequence': sequence,
             'architecture': 'aarch64',
             'os': 'debian-13',
-            'notes': ['Una mejora de prueba.'],
+            'notes': ['A test improvement.'],
             'archiveSha256': hashlib.sha256(archive).hexdigest(),
             'archiveBytes': len(archive),
             'bootstrapSha256': hashlib.sha256(b'bootstrap').hexdigest(),

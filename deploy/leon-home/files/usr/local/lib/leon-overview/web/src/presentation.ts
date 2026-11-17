@@ -37,14 +37,14 @@ export function icon(kind: Connection | undefined, className?: string): SVGSVGEl
   return svg;
 }
 export function date(value: number | null | undefined): string {
-  return typeof value === 'number' ? new Date(value * 1000).toLocaleString() : 'Sin observación';
+  return typeof value === 'number' ? new Date(value * 1000).toLocaleString('en') : 'No observation';
 }
 export function time(value: number | null | undefined): string {
-  return typeof value === 'number' ? new Date(value * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+  return typeof value === 'number' ? new Date(value * 1000).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' }) : '—';
 }
 export function mbps(value: number | null | undefined): string {
-  return typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: value < 10 ? 2 : 1 }) : '—';
+  return typeof value === 'number' ? value.toLocaleString('en', { maximumFractionDigits: value < 10 ? 2 : 1 }) : '—';
 }
 export function speed(value: number | null | undefined): string {
-  return typeof value !== 'number' ? '—' : value >= 1000 ? (value / 1000).toLocaleString() + ' Gbps' : value + ' Mbps';
+  return typeof value !== 'number' ? '—' : value >= 1000 ? (value / 1000).toLocaleString('en') + ' Gbps' : value + ' Mbps';
 }

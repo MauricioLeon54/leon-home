@@ -8,18 +8,18 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
     outcomePort: number | null = null;
   let pending: { port: number; enabled: boolean } | null = null;
   const OUTCOMES = {
-    applied: ['good', 'Hecho: el router confirma el cambio.'],
-    unchanged: ['good', 'El puerto ya estaba así.'],
-    unverified: ['warn', 'No se pudo confirmar: el puerto puede haber cambiado o no. Revisa antes de repetir.'],
-    protectedPort: ['warn', 'Puerto protegido: no está autorizado para desactivarse.'],
-    unknownPort: ['warn', 'El router no informa ese puerto.'],
-    locked: ['warn', 'La sesión del router está bloqueada: desbloquéala desde la Mac.'],
-    busy: ['warn', 'Espera unos segundos entre acciones.'],
-    rejected: ['warn', 'El router rechazó el cambio. No se aplicó.'],
-    invalid: ['warn', 'Solicitud no válida. No se aplicó.'],
-    forbidden: ['warn', 'Sesión expirada o sin permiso. Recarga la página.'],
-    unavailable: ['warn', 'El monitor del router no responde. No se aplicó.'],
-    network: ['warn', 'Sin respuesta: el cambio puede haberse aplicado o no. Revisa antes de repetir.'],
+    applied: ['good', 'Done. The router confirmed the change.'],
+    unchanged: ['good', 'The port was already set.'],
+    unverified: ['warn', 'The result is unconfirmed. The port may have changed. Check before trying again.'],
+    protectedPort: ['warn', 'Protected port. Disabling it is not authorized.'],
+    unknownPort: ['warn', 'The router does not report this port.'],
+    locked: ['warn', 'The router session is locked. Ask your support person to unlock it.'],
+    busy: ['warn', 'Wait a few seconds between actions.'],
+    rejected: ['warn', 'The router rejected the change. It was not applied.'],
+    invalid: ['warn', 'Invalid request. The change was not applied.'],
+    forbidden: ['warn', 'Your session expired or access is denied. Reload the page.'],
+    unavailable: ['warn', 'The router monitor is unavailable. The change was not applied.'],
+    network: ['warn', 'No response. The change may have been applied. Check before trying again.'],
   } satisfies Record<string, Feedback>;
   function portProtected(port: Port) {
     return port.wan === true || !(getState()?.routerTelemetry.controllablePorts || []).includes(port.port);
@@ -29,9 +29,9 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
       panel = $('#panel'),
       detail = $('#port-detail');
     panel.replaceChildren();
-    $('#ports-at').textContent = trafficCurrent() && ports ? 'Router ' + time(getState()?.routerTelemetry.observedAt) : 'Sin lectura actual';
+    $('#ports-at').textContent = trafficCurrent() && ports ? 'Router ' + time(getState()?.routerTelemetry.observedAt) : 'No current reading';
     if (!trafficCurrent() || !ports) {
-      panel.append(text('p', 'Sin lectura actual de los puertos. Requiere la sesión del router desbloqueada.', 'muted small'));
+      panel.append(text('p', 'No current port reading. Unlock the router session to see readings.', 'muted small'));
       detail.replaceChildren();
       return;
     }
@@ -54,7 +54,7 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
         leds,
         jack,
         text('b', port.wan ? 'WAN' : 'LAN ' + port.port),
-        text('small', port.enabled === false ? 'Desactivado' : port.link === 'up' ? speed(port.speedMbps) : port.link === 'down' ? 'Sin cable' : 'Desconocido')
+        text('small', port.enabled === false ? 'Disabled' : port.link === 'up' ? speed(port.speedMbps) : port.link === 'down' ? 'No cable' : 'Unknown')
       );
       button.addEventListener('click', () => {
         selectedPort = port.port;
@@ -72,10 +72,10 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
     const tiles = document.createElement('div');
     tiles.className = 'detail';
     for (const [label, value] of [
-      ['Enlace', port.link === 'up' ? 'Conectado' : port.link === 'down' ? 'Sin enlace' : 'Desconocido'],
-      ['Velocidad', port.link === 'up' ? speed(port.speedMbps) : '—'],
-      ['Dúplex', port.duplex === 'full' ? 'Completo' : port.duplex === 'half' ? 'Medio' : '—'],
-      ['Estado', port.enabled === true ? 'Activado' : port.enabled === false ? 'Desactivado' : 'Desconocido'],
+      ['Link', port.link === 'up' ? 'Connected' : port.link === 'down' ? 'No link' : 'Unknown'],
+      ['Speed', port.link === 'up' ? speed(port.speedMbps) : '—'],
+      ['Duplex', port.duplex === 'full' ? 'Full' : port.duplex === 'half' ? 'Half' : '—'],
+      ['Status', port.enabled === true ? 'Enabled' : port.enabled === false ? 'Disabled' : 'Unknown'],
     ]) {
       const tile = document.createElement('div');
       tile.className = 'tile';
@@ -102,21 +102,21 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
         renderPorts();
       });
       const note = isPending
-        ? ['Aplicando…', '']
+        ? ['Applying…', '']
         : outcomePort === port.port && outcome
           ? feedbackFor(OUTCOMES, outcome, 'invalid')
           : [
               port.wan
-                ? 'Puerto WAN · protegido siempre'
+                ? 'WAN port · always protected'
                 : locked
-                  ? 'Protegido · no está en la lista autorizada'
+                  ? 'Protected · not in the allowed list'
                   : port.enabled === false
-                    ? 'Desactivado'
+                    ? 'Disabled'
                     : port.link === 'up'
-                      ? 'Activado · ' + speed(port.speedMbps)
+                      ? 'Enabled · ' + speed(port.speedMbps)
                       : port.enabled === true
-                        ? 'Activado · sin cable'
-                        : 'Estado desconocido',
+                        ? 'Enabled · no cable'
+                        : 'Unknown state',
               '',
             ];
       info.append(text('b', port.wan ? 'WAN' : 'LAN ' + port.port), text('small', note[0], note[1]));
@@ -125,7 +125,7 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
       toggle.className = 'switch';
       toggle.setAttribute('role', 'switch');
       toggle.checked = isPending ? isPending.enabled : port.enabled === true;
-      toggle.setAttribute('aria-label', (port.wan ? 'WAN' : 'Puerto ' + port.port) + ' activado');
+      toggle.setAttribute('aria-label', (port.wan ? 'WAN' : 'Port ' + port.port) + ' enabled');
       if (isPending) toggle.setAttribute('aria-busy', 'true');
       toggle.disabled = acting || !(getState()?.actionToken ?? '') || (locked && port.enabled === true);
       toggle.addEventListener('change', () => {
@@ -142,14 +142,14 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
   }
   function confirmPort(port: Port, enabling: boolean) {
     const dialog = $('#confirm', HTMLDialogElement);
-    $('#confirm-title').textContent = (enabling ? 'Activar' : 'Desactivar') + ' el puerto ' + port.port + '?';
+    $('#confirm-title').textContent = (enabling ? 'Enable' : 'Disable') + ' port ' + port.port + '?';
     $('#confirm-text').textContent = enabling
-      ? 'El router restablecerá el enlace Ethernet de este puerto.'
+      ? 'The router will restore the Ethernet link on this port.'
       : port.link === 'up'
-        ? 'Hay un equipo conectado: perderá la red cableada hasta que vuelvas a activar el puerto. La energía no se corta.'
-        : 'El puerto no tiene enlace ahora. Si conectas un equipo, no tendrá red hasta activarlo.';
+        ? 'A connected device will lose its wired connection until you enable the port again. Power stays on.'
+        : 'The port has no link now. A device connected here will have no network until the port is enabled.';
     const ok = $('#confirm-ok', HTMLButtonElement);
-    ok.textContent = enabling ? 'Activar' : 'Desactivar';
+    ok.textContent = enabling ? 'Enable' : 'Disable';
     ok.className = enabling ? 'primary' : 'danger';
     ok.onclick = () => {
       dialog.close();
@@ -159,14 +159,14 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
     dialog.showModal();
   }
   const UNLOCK_OUTCOMES = {
-    current: ['good', 'Listo: sesión del router activa.'],
-    unlockFailed: ['warn', 'Frase incorrecta o el router no respondió. Puedes intentarlo de nuevo en un minuto.'],
-    busy: ['warn', 'Espera un minuto entre intentos.'],
-    notConfigured: ['warn', 'La Pi aún no tiene la copia cifrada de la bóveda.'],
-    forbidden: ['warn', 'Sesión de la página caducada. Recarga.'],
-    unavailable: ['warn', 'El monitor del router no responde.'],
-    invalid: ['warn', 'Frase no válida.'],
-    network: ['warn', 'Sin conexión con LEÓN Home.'],
+    current: ['good', 'Ready. The router session is active.'],
+    unlockFailed: ['warn', 'Incorrect passphrase or no router response. Try again in one minute.'],
+    busy: ['warn', 'Wait one minute between attempts.'],
+    notConfigured: ['warn', 'The Pi does not have an encrypted vault copy yet.'],
+    forbidden: ['warn', 'Your page session expired. Reload to continue.'],
+    unavailable: ['warn', 'The router monitor is not responding.'],
+    invalid: ['warn', 'Invalid passphrase.'],
+    network: ['warn', 'LEÓN Home could not be reached.'],
   } satisfies Record<string, Feedback>;
   // One attempt per submit, never retried; the password field is cleared whatever the outcome.
   $('#unlock-form', HTMLFormElement).addEventListener('submit', event => {
@@ -179,7 +179,7 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
       status = $('#unlock-status');
     if (!getState()?.actionToken || button.disabled) return;
     button.disabled = true;
-    button.textContent = 'Descifrando…';
+    button.textContent = 'Decrypting…';
     let result;
     try {
       const reply = await postAction('/network-map/unlock', { phrase: field.value }, getState()?.actionToken ?? '');
@@ -189,7 +189,7 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
     } finally {
       field.value = '';
       button.disabled = false;
-      button.textContent = 'Desbloquear';
+      button.textContent = 'Unlock';
     }
     const [tone, message] = feedbackFor(UNLOCK_OUTCOMES, result, 'unlockFailed');
     status.textContent = message;

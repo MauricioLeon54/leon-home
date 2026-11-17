@@ -181,7 +181,7 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
 
     def bundle(version, sequence):
         path = work / version
-        build(path, version, sequence, ['Prueba de integración.'])
+        build(path, version, sequence, ['Integration test.'])
         subprocess.run(
             [
                 'openssl',

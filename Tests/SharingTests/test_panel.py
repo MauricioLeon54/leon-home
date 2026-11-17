@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import pathlib
 import sys
 import threading
@@ -54,10 +55,30 @@ class PanelTests(unittest.TestCase):
             with self.request('/updates', 'owner@example.test') as response:
                 body = response.read().decode()
                 self.assertIn('updates.js', body)
-                self.assertIn('Aceptar e instalar', body)
+                self.assertIn('lang="en"', body)
+                self.assertIn('Accept and install', body)
                 self.assertNotIn('onclick=', body)
                 self.assertIn("script-src 'nonce-", response.headers['Content-Security-Policy'])
                 self.assertEqual(response.headers['Cache-Control'], 'no-store')
+
+    def test_home_network_offline_and_installable_manifest_use_english(self):
+        sample = {'snapshot': {}, 'host': {}, 'dns': None, 'at': 1_700_000_000}
+        with (
+            patch.object(family.overview, 'OWNERS', {'owner@example.test'}),
+            patch.object(family.overview, '_data', sample),
+        ):
+            for path, expected in (
+                ('/', 'Home network'),
+                ('/network-map', 'Interactive device map'),
+                ('/offline', 'Connect Tailscale and try again.'),
+            ):
+                with self.subTest(path=path):
+                    with self.request(path, 'owner@example.test') as response:
+                        body = response.read().decode()
+                        self.assertIn('lang="en"', body)
+                        self.assertIn(expected, body)
+            with self.request('/manifest.webmanifest', 'owner@example.test') as response:
+                self.assertEqual(json.load(response)['lang'], 'en')
 
     def test_acceptance_requires_owner_token_same_origin_json_and_exact_version_body(self):
         with (

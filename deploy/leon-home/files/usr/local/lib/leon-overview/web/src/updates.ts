@@ -11,22 +11,22 @@ interface State {
   actionToken: string;
 }
 const TITLES = {
-  current: 'Todo está actualizado',
-  checking: 'Buscando mejoras…',
-  ready: 'Hay una actualización',
-  installing: 'Instalando la actualización…',
-  error: 'Necesitamos revisar algo',
+  current: 'Everything is up to date',
+  checking: 'Checking for updates…',
+  ready: 'An update is available',
+  installing: 'Installing update…',
+  error: 'Maintenance needs attention',
 } satisfies Record<Phase, string>;
 const ERRORS: Readonly<Record<string, string>> = {
-  bootstrapUpdateNeeded: 'Hay una actualización de mantenimiento que necesita ayuda para instalarse. Tu versión actual sigue disponible.',
-  networkUnavailable: 'No pudimos consultar las actualizaciones. Comprueba que tu Raspberry tiene Internet e inténtalo de nuevo.',
-  invalidSignature: 'No se pudo verificar esta actualización. Conservamos la versión actual; pide ayuda antes de continuar.',
-  invalidRelease: 'La actualización no está completa. Conservamos tu versión actual.',
-  incompatible: 'Esta actualización no es compatible con tu Raspberry. Pide ayuda para revisarlo.',
-  notEnoughSpace: 'Falta espacio en la Raspberry. Pide ayuda para liberar espacio y vuelve a intentarlo.',
-  rolledBack: 'La actualización no terminó bien. Recuperamos la versión anterior y puedes seguir usando el panel.',
-  recoveryNeeded: 'La actualización necesita ayuda de mantenimiento. Pi-hole se administra por separado.',
-  inventoryBusy: 'La Raspberry está terminando otra tarea. Vuelve a intentarlo en un momento.',
+  bootstrapUpdateNeeded: 'A maintenance update needs assistance to install. Your current version remains available.',
+  networkUnavailable: 'Updates could not be checked. Check the Internet connection on your Pi and try again.',
+  invalidSignature: 'This update could not be verified. Your current version is preserved. Ask for help before continuing.',
+  invalidRelease: 'This update is incomplete. Your current version is preserved.',
+  incompatible: 'This update is incompatible with your Pi. Ask your support person to review it.',
+  notEnoughSpace: 'The Pi needs more free space. Ask for help freeing space, then try again.',
+  rolledBack: 'The update did not finish successfully. The previous version was restored and the panel is available.',
+  recoveryNeeded: 'This update needs maintenance help. Pi-hole is maintained separately.',
+  inventoryBusy: 'The Pi is finishing another task. Try again shortly.',
 };
 let state: State | null = null;
 let busy = false;
@@ -45,9 +45,9 @@ function parse(value: unknown): State {
 }
 function render() {
   if (!state) return;
-  $('#release-status').textContent = state.phase === 'installing' ? 'La Raspberry está trabajando' : 'LEÓN Home';
+  $('#release-status').textContent = state.phase === 'installing' ? 'Your Pi is working' : 'LEÓN Home';
   $('#release-title').textContent = TITLES[state.phase];
-  $('#release-version').textContent = 'Versión instalada: ' + state.version + (state.available ? ' · Disponible: ' + state.available.version : '');
+  $('#release-version').textContent = 'Installed version: ' + state.version + (state.available ? ' · Available: ' + state.available.version : '');
   const notes = $('#release-notes');
   notes.replaceChildren();
   for (const note of state.available?.notes ?? []) {
@@ -61,8 +61,8 @@ function render() {
   apply.hidden = !state.available || state.phase === 'installing';
   apply.disabled = working;
   $('#release-message').textContent = state.error
-    ? (ERRORS[state.error] ?? 'El servicio de actualizaciones no está disponible. Vuelve a intentarlo o pide ayuda.')
-    : 'Pi-hole seguirá funcionando mientras se actualiza el panel.';
+    ? (ERRORS[state.error] ?? 'The update service is unavailable. Try again or ask your support person for help.')
+    : 'Pi-hole keeps running while the panel updates.';
 }
 async function refresh(): Promise<void> {
   if (busy || document.hidden) return;
@@ -74,8 +74,8 @@ async function refresh(): Promise<void> {
   } catch {
     $('#release-apply', HTMLButtonElement).disabled = true;
     $('#release-check', HTMLButtonElement).disabled = false;
-    $('#release-status').textContent = 'Esperando a tu Raspberry…';
-    $('#release-message').textContent = 'El panel puede estar reiniciándose. Mantén Tailscale conectado; volveremos a comprobarlo.';
+    $('#release-status').textContent = 'Waiting for your Pi…';
+    $('#release-message').textContent = 'The panel may be restarting. Keep Tailscale connected; we will check again.';
     return;
   } finally {
     busy = false;
@@ -93,9 +93,9 @@ async function act(path: '/updates/check' | '/updates/apply'): Promise<void> {
         : state.available
           ? await postAction('/updates/apply', { version: state.available.version }, state.actionToken)
           : null;
-    if (!response?.ok) $('#release-message').textContent = 'No pudimos iniciar la tarea. Recarga la página y vuelve a intentarlo.';
+    if (!response?.ok) $('#release-message').textContent = 'The task could not start. Reload the page and try again.';
   } catch {
-    $('#release-message').textContent = 'No pudimos conectar con tu Raspberry. Comprueba Tailscale y vuelve a intentarlo.';
+    $('#release-message').textContent = 'Your Pi could not be reached. Check Tailscale and try again.';
   } finally {
     busy = false;
   }

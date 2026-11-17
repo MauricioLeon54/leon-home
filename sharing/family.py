@@ -45,8 +45,8 @@ class Handler(overview.Handler):
             ).encode()
             return self.reply(200, body, 'application/json; charset=utf-8')
         nonce = base64.b64encode(os.urandom(12)).decode()
-        page = f'''<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Actualizaciones · LEÓN Home</title><link rel="stylesheet" href="/network-map/assets/home.css"><link rel="stylesheet" href="/network-map/assets/updates.css"></head>
+        page = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Updates · LEÓN Home</title><link rel="stylesheet" href="/network-map/assets/home.css"><link rel="stylesheet" href="/network-map/assets/updates.css"></head>
 <body>{BODY}<script type="module" nonce="{nonce}" src="/network-map/assets/updates.js"></script></body></html>'''
         return self.reply(200, page.encode(), 'text/html; charset=utf-8', nonce=nonce)
 
@@ -86,7 +86,7 @@ class Handler(overview.Handler):
 
 def render(data, login, nonce):
     page = original_render(data, login, nonce).decode()
-    link = '<section class="card"><h3>LEÓN Home</h3><div class="links"><a href="/updates">Actualizaciones<span>›</span></a></div></section>'
+    link = '<section class="card"><h3>LEÓN Home</h3><div class="links"><a href="/updates">Updates<span>›</span></a></div></section>'
     return page.replace('</main>', link + '</main>').encode()
 
 

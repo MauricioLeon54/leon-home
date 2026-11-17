@@ -12,7 +12,7 @@ const ROUTER_FRESH_SECONDS = 90,
   REFRESH_MS = 15000;
 type View = 'map' | 'traffic' | 'ports';
 const VIEWS: ReadonlyArray<View> = ['map', 'traffic', 'ports'];
-const TITLES = { map: 'Red', traffic: 'Tráfico', ports: 'Puertos' } satisfies Record<View, string>;
+const TITLES = { map: 'Network', traffic: 'Traffic', ports: 'Ports' } satisfies Record<View, string>;
 let state: Snapshot | null = null;
 let failed = false,
   busy = false;
@@ -40,26 +40,18 @@ function chip(element: HTMLElement, tone: string, label: string) {
 }
 function updateChips() {
   if (!state) {
-    chip($('#scan-chip'), 'warn', failed ? 'Sin conexión' : 'Cargando…');
+    chip($('#scan-chip'), 'warn', failed ? 'Offline' : 'Loading…');
     return;
   }
-  chip(
-    $('#scan-chip'),
-    scanCurrent() ? 'ok' : 'warn',
-    failed ? 'Sin conexión · datos anteriores' : scanCurrent() ? 'Escaneo ' + time(state.observedAt) : state.observedAt ? 'Escaneo obsoleto' : 'Escaneo desconocido'
-  );
+  chip($('#scan-chip'), scanCurrent() ? 'ok' : 'warn', failed ? 'Offline · previous readings' : scanCurrent() ? 'Scan ' + time(state.observedAt) : state.observedAt ? 'Stale scan' : 'Unknown scan');
   const status = state.routerTelemetry?.status;
-  chip(
-    $('#router-chip'),
-    trafficCurrent() ? 'ok' : 'warn',
-    trafficCurrent() ? 'Router en vivo' : status === 'locked' ? 'Router bloqueado' : status === 'error' ? 'Sesión terminada' : 'Router sin lectura'
-  );
+  chip($('#router-chip'), trafficCurrent() ? 'ok' : 'warn', trafficCurrent() ? 'Router live' : status === 'locked' ? 'Router locked' : status === 'error' ? 'Session ended' : 'No router reading');
   const locked = status === 'locked' || status === 'error';
   $('#locked').hidden = !locked || failed;
   $('#locked-text').textContent =
     status === 'error'
-      ? 'La sesión del router dejó de responder. LEÓN no reintenta contraseñas: desbloquea de nuevo.'
-      : 'Tras reiniciar la Pi o el monitor, la sesión empieza bloqueada. El mapa sigue funcionando con el inventario.';
+      ? 'The router session stopped responding. LEÓN does not retry passwords. Unlock it again.'
+      : 'The router session starts locked after the Pi or monitor restarts. The inventory map remains available.';
 }
 
 // ---------------------------------------------------------------- views
@@ -100,7 +92,7 @@ async function refresh() {
     if (state) render();
     else {
       updateChips();
-      $('.status').textContent = 'No se pudo cargar el mapa. Comprueba Tailscale.';
+      $('.status').textContent = 'The map could not load. Check Tailscale.';
     }
   } finally {
     clearTimeout(timeout);

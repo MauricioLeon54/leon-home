@@ -102,14 +102,14 @@ TOKEN_SECONDS = 3600
 SECRET = os.urandom(32)
 UNIT_LABELS = {
     'pihole-FTL': 'Pi-hole',
-    'unbound': 'DNS cifrado',
+    'unbound': 'Encrypted DNS',
     'tailscaled': 'Tailscale',
     'ssh': 'SSH',
-    'leon-dns-firewall': 'Firewall DNS',
-    'leon-netmap.timer': 'Escaneo de red',
-    'leon-backup.timer': 'Respaldo cifrado',
-    'leon-overview': 'Este sitio',
-    'unattended-upgrades': 'Actualizaciones',
+    'leon-dns-firewall': 'DNS firewall',
+    'leon-netmap.timer': 'Network scan',
+    'leon-backup.timer': 'Encrypted backup',
+    'leon-overview': 'This panel',
+    'unattended-upgrades': 'Updates',
 }
 ASSETS = {
     '/brand/symbol.png': 'symbol-web.png',
@@ -126,7 +126,7 @@ MANIFEST = json.dumps(
         'scope': '/',
         'display': 'standalone',
         'orientation': 'portrait',
-        'lang': 'es',
+        'lang': 'en',
         'background_color': '#0e0e0e',
         'theme_color': '#0e0e0e',
         'icons': [
@@ -670,12 +670,12 @@ def ago(stamp):
         return '—'
     seconds = max(0, time.time() - stamp)
     if seconds < 90:
-        return 'ahora'
+        return 'now'
     if seconds < 3600:
-        return f'hace {int(seconds // 60)} min'
+        return f'{int(seconds // 60)} min ago'
     if seconds < 86400:
-        return f'hace {int(seconds // 3600)} h'
-    return f'hace {int(seconds // 86400)} d'
+        return f'{int(seconds // 3600)} h ago'
+    return f'{int(seconds // 86400)} d ago'
 
 
 def duration(seconds):
@@ -708,24 +708,24 @@ def problems(data):
     host, dns, found = data.get('host', {}), data.get('dns'), []
     flags = host.get('throttledFlags')
     if flags is not None and flags & 0x1:
-        found.append('Bajo voltaje')
+        found.append('Low voltage')
     elif flags is not None and flags & 0xE:
-        found.append('CPU limitada')
+        found.append('CPU throttled')
     if (host.get('temperatureCelsius') or 0) >= 70:
-        found.append('Temperatura alta')
+        found.append('High temperature')
     found += [
-        UNIT_LABELS.get(u['name'], u['name']) + ' detenido'
+        UNIT_LABELS.get(u['name'], u['name']) + ' stopped'
         for u in host.get('units', [])
         if u['state'] not in ('active', 'reloading')
     ]
     if host.get('failedUnits'):
-        found.append(f'{host["failedUnits"]} servicios con fallo')
+        found.append(f'{host["failedUnits"]} failed services')
     if host.get('clockSynchronized') is False:
-        found.append('Reloj sin sincronizar')
+        found.append('Clock not synchronized')
     if dns is None:
-        found.append('Pi-hole no responde')
+        found.append('Pi-hole is unavailable')
     if (data.get('internet') or {}).get('internetMs') is None and data.get('internet') is not None:
-        found.append('Sin internet')
+        found.append('No Internet')
     return found
 
 
@@ -742,15 +742,15 @@ def row(ok, text, detail='', extra=''):
 
 
 OUTREACH_LABELS = {
-    'ok': 'activo',
-    'paused': 'en pausa',
-    'idle': 'sin actividad',
-    'stale': 'sin acciones recientes',
-    'signed-out': 'sesión cerrada',
-    'human-check': 'verificación humana',
-    'rate-limited': 'limitado',
+    'ok': 'active',
+    'paused': 'paused',
+    'idle': 'idle',
+    'stale': 'no recent actions',
+    'signed-out': 'signed out',
+    'human-check': 'human verification',
+    'rate-limited': 'limited',
 }
-DISPLAY_LABELS = {'awake': 'encendida', 'asleep': 'apagada', 'dreaming': 'protector de pantalla'}
+DISPLAY_LABELS = {'awake': 'on', 'asleep': 'off', 'dreaming': 'screen saver'}
 
 
 def tablet_summary_rows(stored, now):
@@ -767,13 +767,13 @@ def tablet_summary_rows(stored, now):
     battery = summary.get('battery')
     if battery:
         state = (
-            'completa'
+            'full'
             if battery['full']
-            else 'cargando'
+            else 'charging'
             if battery['charging']
-            else 'conectada'
+            else 'plugged in'
             if battery['pluggedIn']
-            else 'en batería'
+            else 'on battery'
         )
         heat = (
             f' · {battery["temperatureCelsius"]:.0f} °C'
@@ -781,23 +781,23 @@ def tablet_summary_rows(stored, now):
             else ''
         )
         low = battery['percent'] < 15 and not battery['pluggedIn']
-        rows.append(row(tone(not low), 'Batería', f'{battery["percent"]}% · {state}{heat}'))
+        rows.append(row(tone(not low), 'Battery', f'{battery["percent"]}% · {state}{heat}'))
     else:
-        rows.append(row(None, 'Batería', 'sin lectura (ADB de la tableta no disponible)'))
+        rows.append(row(None, 'Battery', 'no reading (tablet ADB unavailable)'))
     if summary.get('display'):
-        rows.append(row(None, 'Pantalla', DISPLAY_LABELS[summary['display']]))
+        rows.append(row(None, 'Display', DISPLAY_LABELS[summary['display']]))
     else:
-        rows.append(row(None, 'Pantalla', 'sin lectura'))
+        rows.append(row(None, 'Display', 'no reading'))
     if summary.get('storageFreePercent') is not None:
         rows.append(
             row(
                 tone(summary['storageFreePercent'] >= 10),
-                'Almacenamiento libre',
+                'Free storage',
                 f'{summary["storageFreePercent"]}%',
             )
         )
     if summary.get('memoryAvailablePercent') is not None:
-        rows.append(row(None, 'Memoria disponible', f'{summary["memoryAvailablePercent"]}%'))
+        rows.append(row(None, 'Available memory', f'{summary["memoryAvailablePercent"]}%'))
     outreach = summary.get('outreach')
     if outreach:
         fresh = now - outreach['checkedAt'] <= REPORT_FRESH_SECONDS
@@ -805,32 +805,32 @@ def tablet_summary_rows(stored, now):
             row(
                 tone(fresh and not outreach['needsAttention']),
                 'Outreach',
-                f'{OUTREACH_LABELS[outreach["state"]]} · {outreach["actions24h"]} acciones y '
-                f'{outreach["errors24h"]} errores en 24 h · {ago(outreach["checkedAt"])}',
+                f'{OUTREACH_LABELS[outreach["state"]]} · {outreach["actions24h"]} actions and '
+                f'{outreach["errors24h"]} errors in 24 h · {ago(outreach["checkedAt"])}',
             )
         )
     trader = summary.get('trader')
     if trader:
         fresh = now - trader['checkedAt'] <= REPORT_FRESH_SECONDS
         state = (
-            'kill switch activo'
+            'kill switch active'
             if trader['killSwitch']
-            else 'detenido por pérdida'
+            else 'halted after loss'
             if trader['halted']
-            else 'activo'
+            else 'active'
         )
         change = f' · {trader["returnPct"]}%' if trader.get('returnPct') is not None else ''
         rows.append(
             row(
                 tone(fresh and not trader['killSwitch'] and not trader['halted']),
-                'Trader (simulado)',
+                'Trader (simulated)',
                 f'{state}{change} · {ago(trader["checkedAt"])}',
             )
         )
     age = (
-        f'Leído por la Mac {ago(summary["observedAt"])}'
+        f'Read by the Mac {ago(summary["observedAt"])}'
         if current
-        else f'Dato obsoleto: la Mac lo leyó {ago(summary["observedAt"])}'
+        else f'Stale reading: last read by the Mac {ago(summary["observedAt"])}'
     )
     return ''.join(rows), age
 
@@ -845,29 +845,29 @@ def tablet_card(peers, name, observed_at, stored=None, now=None):
     if not name:
         line = ''
     elif peers is None:
-        line = row(None, 'Tableta', 'sin datos de Tailscale')
+        line = row(None, 'Tablet', 'no Tailscale data')
     elif peer is None:
-        line = row(None, 'Tableta', 'no aparece en la tailnet')
+        line = row(None, 'Tablet', 'not in the tailnet')
     elif peer['online']:
         line = row(
-            True, 'Tableta', 'en línea · ' + ('conexión directa' if peer['direct'] else 'por relay')
+            True, 'Tablet', 'online · ' + ('direct connection' if peer['direct'] else 'via relay')
         )
     else:
-        line = row(False, 'Tableta', f'fuera de línea · visto {ago(peer["seen"])}')
+        line = row(False, 'Tablet', f'offline · last seen {ago(peer["seen"])}')
     summary_note = (
         (
-            f'<p class="muted small note">{e(age)}. Si la Mac duerme o LEÓN Labs está cerrada, estos datos '
-            f'envejecen.</p>'
+            f'<p class="muted small note">{e(age)}. These readings become stale if the Mac sleeps or LEÓN Labs is closed. '
+            f'</p>'
         )
         if detail_rows
         else (
-            '<p class="muted small note">Batería, pantalla y servicios aparecen cuando la Mac publica una lectura.</p>'
+            '<p class="muted small note">Battery, display and services appear when the Mac publishes a reading.</p>'
         )
     )
     return (
-        f'<section class="card"><h3>Tableta</h3><ul>{line}{detail_rows}</ul>'
-        f'<p class="muted small note">Alcance por Tailscale, leído {e(ago(observed_at))}. Aviso al teléfono tras '
-        f'10 min fuera de línea.</p>{summary_note}</section>'
+        f'<section class="card"><h3>Tablet</h3><ul>{line}{detail_rows}</ul>'
+        f'<p class="muted small note">Reachability over Tailscale, read {e(ago(observed_at))}. Phone notification after '
+        f'10 minutes offline.</p>{summary_note}</section>'
     )
 
 
@@ -892,21 +892,21 @@ def bars(hours):
         h_block = blocked / peak * height
         label = time.strftime('%H:00', time.localtime(hour * 3600))
         parts.append(
-            f'<g><title>{label} · {total} consultas, {blocked} bloqueadas</title>'
+            f'<g><title>{label} · {total} queries, {blocked} blocked</title>'
             f'<rect class="total" x="{x}" y="{height - h_total:.1f}" width="{width}" height="{h_total:.1f}" rx="2"/>'
             f'<rect class="blocked" x="{x}" y="{height - h_block:.1f}" width="{width}" height="{h_block:.1f}" rx="2"/></g>'
         )
     first = time.strftime('%H:00', time.localtime(hours[0][0] * 3600))
     return (
         f'<svg class="bars" viewBox="0 0 {len(hours) * (width + gap) - gap} {height}" preserveAspectRatio="none" '
-        f'aria-label="Consultas por hora">{"".join(parts)}</svg>'
-        f'<div class="axis"><span>{first}</span><span>ahora</span></div>'
+        f'aria-label="Queries per hour">{"".join(parts)}</svg>'
+        f'<div class="axis"><span>{first}</span><span>now</span></div>'
     )
 
 
 def sparkline(points):
     if len(points) < 2:
-        return '<p class="muted small">La gráfica aparece tras unos minutos de lecturas.</p>'
+        return '<p class="muted small">The chart appears after a few minutes of readings.</p>'
     values = [v for _, v in points]
     low, high = min(values) - 1, max(values) + 1
     start, span = points[0][0], (points[-1][0] - points[0][0]) or 1
@@ -915,9 +915,9 @@ def sparkline(points):
         for t, v in points
     )
     return (
-        f'<svg class="spark" viewBox="0 0 300 60" preserveAspectRatio="none" aria-label="Temperatura">'
+        f'<svg class="spark" viewBox="0 0 300 60" preserveAspectRatio="none" aria-label="Temperature">'
         f'<polyline points="{coords}"/></svg>'
-        f'<div class="axis"><span>mín {min(values):.0f} °C</span><span>máx {max(values):.0f} °C</span></div>'
+        f'<div class="axis"><span>min {min(values):.0f} °C</span><span>max {max(values):.0f} °C</span></div>'
     )
 
 
@@ -929,8 +929,8 @@ def strip(presence):
 def render(data, login, nonce):
     if not data:
         return page(
-            '<section class="card hero"><h2>Preparando lecturas…</h2>'
-            '<p class="muted">La primera muestra tarda unos segundos.</p></section>',
+            '<section class="card hero"><h2>Preparing readings…</h2>'
+            '<p class="muted">The first sample takes a few seconds.</p></section>',
             nonce,
         )
     snapshot, host, dns = data['snapshot'], data['host'], data.get('dns')
@@ -939,13 +939,13 @@ def render(data, login, nonce):
     running = sum(u['state'] in ('active', 'reloading') for u in units)
     temperature = host.get('temperatureCelsius')
     flags = host.get('throttledFlags')
-    headline = 'Todo funciona' if not issues else ' · '.join(issues)
+    headline = 'Everything is running' if not issues else ' · '.join(issues)
     hero = (
         f'<section class="card hero {"ok" if not issues else "bad"}">'
         f'<div class="status"><i class="dot {"ok" if not issues else "bad"} pulse"></i>'
         f'<h2>{e(headline)}</h2></div>'
-        f'<p class="muted">Encendida {e(duration(snapshot.get("uptimeSeconds")))} · '
-        f'{running}/{len(units)} servicios · {e(f"{temperature:.0f} °C" if temperature is not None else "—")}</p></section>'
+        f'<p class="muted">Uptime {e(duration(snapshot.get("uptimeSeconds")))} · '
+        f'{running}/{len(units)} services · {e(f"{temperature:.0f} °C" if temperature is not None else "—")}</p></section>'
     )
 
     internet = data.get('internet') or {}
@@ -958,8 +958,8 @@ def render(data, login, nonce):
             'Internet',
             '' if internet.get('internetMs') is not None else 'warn',
         )
-        + tile(ms(internet.get('dnsMs')), 'DNS del router')
-        + tile(ms(dns.get('upstreamMs') if dns else None), 'DNS cifrado')
+        + tile(ms(internet.get('dnsMs')), 'Router DNS')
+        + tile(ms(dns.get('upstreamMs') if dns else None), 'Encrypted DNS')
         + '</div></section>'
     )
 
@@ -967,65 +967,65 @@ def render(data, login, nonce):
         paused = dns.get('blocking') != 'enabled'
         timer = dns.get('timer')
         state = (
-            'Bloqueo activo'
+            'Blocking enabled'
             if not paused
-            else f'Bloqueo en pausa{f" · {int(timer // 60)} min restantes" if timer else ""}'
+            else f'Blocking paused{f" · {int(timer // 60)} min remaining" if timer else ""}'
         )
         controls = (
             ''.join(
                 f'<form method="post" action="/action/pause"><input type="hidden" name="t" value="{e(token(login))}">'
-                f'<input type="hidden" name="s" value="{seconds}"><button>Pausar {label}</button></form>'
+                f'<input type="hidden" name="s" value="{seconds}"><button>Pause {label}</button></form>'
                 for seconds, label in PAUSE_CHOICES.items()
             )
             if not paused
             else (
                 f'<form method="post" action="/action/resume"><input type="hidden" name="t" value="{e(token(login))}">'
-                f'<button class="primary">Reanudar bloqueo</button></form>'
+                f'<button class="primary">Resume blocking</button></form>'
             )
         )
         dns_card = (
             f'<section class="card"><h3>DNS · Pi-hole</h3>'
             f'<div class="split"><div class="ring">{donut(dns["percent"])}'
-            f'<div><b>{dns["percent"]:.1f}%</b><span>bloqueado hoy</span></div></div>'
-            f'<div class="tiles two">{tile(number(dns["queries"]), "Consultas")}'
-            f'{tile(number(dns["blocked"]), "Bloqueadas")}{tile(number(dns["gravity"]), "Dominios en listas")}'
-            f'{tile(str(dns["clients"]), "Clientes activos")}</div></div>'
-            f'<h4>Últimas 24 horas <span class="legend"><i class="sw total"></i>consultas'
-            f'<i class="sw blocked"></i>bloqueadas</span></h4>{bars(dns["hours"])}'
+            f'<div><b>{dns["percent"]:.1f}%</b><span>blocked today</span></div></div>'
+            f'<div class="tiles two">{tile(number(dns["queries"]), "Queries")}'
+            f'{tile(number(dns["blocked"]), "Blocked")}{tile(number(dns["gravity"]), "Domains on blocklists")}'
+            f'{tile(str(dns["clients"]), "Active clients")}</div></div>'
+            f'<h4>Last 24 hours <span class="legend"><i class="sw total"></i>queries'
+            f'<i class="sw blocked"></i>blocked</span></h4>{bars(dns["hours"])}'
             f'<div class="control"><span class="{"warnText" if paused else "goodText"}">{e(state)}</span>'
             f'<div class="buttons">{controls}</div></div></section>'
         )
         lists = (
             '<div class="grid2">'
-            '<section class="card"><h3>Más bloqueados</h3><ul>'
+            '<section class="card"><h3>Top blocked domains</h3><ul>'
             + ''.join(row(None, domain, number(count)) for domain, count in dns['topBlocked'])
-            + '</ul></section><section class="card"><h3>Quién consulta más</h3><ul>'
+            + '</ul></section><section class="card"><h3>Top clients</h3><ul>'
             + ''.join(row(True, name, number(count)) for name, count in dns['topClients'])
             + '</ul></section></div>'
         )
     else:
         dns_card, lists = (
-            '<section class="card"><h3>DNS · Pi-hole</h3><p class="muted">Sin datos de Pi-hole.</p></section>',
+            '<section class="card"><h3>DNS · Pi-hole</h3><p class="muted">No Pi-hole data.</p></section>',
             '',
         )
 
-    power = 'OK' if flags == 0 else ('Revisar' if flags else '—')
+    power = 'OK' if flags == 0 else ('Check' if flags else '—')
     pi_card = (
         '<section class="card"><h3>Raspberry Pi</h3><div class="tiles three">'
         + tile(
             f'{temperature:.0f} °C' if temperature is not None else '—',
-            'Temperatura',
+            'Temperature',
             'warn' if (temperature or 0) >= 70 else '',
         )
         + tile(f'{host["cpuPercent"]:.0f}%' if host.get('cpuPercent') is not None else '—', 'CPU')
-        + tile(f'{host["load1"]:.2f}' if host.get('load1') is not None else '—', 'Carga')
-        + tile(size(snapshot.get('memoryAvailableBytes')), 'RAM libre')
-        + tile(size(snapshot.get('storageFreeBytes')), 'Disco libre')
-        + tile(power, 'Alimentación', '' if flags in (0, None) else 'warn')
-        + '</div><h4>Temperatura · 24 h</h4>'
+        + tile(f'{host["load1"]:.2f}' if host.get('load1') is not None else '—', 'Load')
+        + tile(size(snapshot.get('memoryAvailableBytes')), 'Free RAM')
+        + tile(size(snapshot.get('storageFreeBytes')), 'Free storage')
+        + tile(power, 'Power', '' if flags in (0, None) else 'warn')
+        + '</div><h4>Temperature · 24 h</h4>'
         + sparkline(list(_temperatures))
         + (
-            '<p class="muted small">Reinicio pendiente por actualizaciones.</p>'
+            '<p class="muted small">Restart needed after system updates.</p>'
             if host.get('rebootRequired')
             else ''
         )
@@ -1033,12 +1033,12 @@ def render(data, login, nonce):
     )
 
     unit_card = (
-        '<section class="card"><h3>Servicios</h3><ul>'
+        '<section class="card"><h3>Services</h3><ul>'
         + ''.join(
             row(
                 u['state'] in ('active', 'reloading'),
                 UNIT_LABELS.get(u['name'], u['name']),
-                'activo' if u['state'] in ('active', 'reloading') else u['state'],
+                'active' if u['state'] in ('active', 'reloading') else u['state'],
             )
             for u in units
         )
@@ -1054,12 +1054,12 @@ def render(data, login, nonce):
             d.get('label') or d['ip'],
             d['ip'] if d.get('label') else (ms(d.get('rttMs')) if d.get('rttMs') else ''),
             (
-                '<em class="badge">nuevo</em>'
+                '<em class="badge">new</em>'
                 if (d.get('firstSeen') or 0) > baseline + 86400
                 and time.time() - d['firstSeen'] < 86400
                 else ''
             )
-            + ('<em class="badge soft">sin nombre</em>' if d.get('source') == 'unknown' else '')
+            + ('<em class="badge soft">unnamed</em>' if d.get('source') == 'unknown' else '')
             + ('<em class="badge soft">auto</em>' if d.get('source') == 'mdns' else '')
             + strip(d.get('presence')),
         )
@@ -1068,15 +1068,15 @@ def render(data, login, nonce):
     naming = data.get('naming') or {}
     moves = [m for m in naming.get('moves', []) if time.time() - m.get('at', 0) < 7 * 86400][-3:]
     move_text = ''.join(
-        f'<p class="muted small">{e(m["name"])} cambió de {e(m["from"])} a {e(m["to"])} · '
+        f'<p class="muted small">{e(m["name"])} moved from {e(m["from"])} to {e(m["to"])} · '
         f'{e(ago(m["at"]))}</p>'
         for m in reversed(moves)
     )
     home_card = (
-        f'<section class="card"><h3>Red de casa <span class="count">{len(online)} en línea</span></h3>'
-        f'<ul>{device_rows or row(None, "Sin inventario")}</ul>'
-        f'<p class="muted small note">Nombres por dirección física: siguen al equipo aunque cambie de IP · '
-        f'{naming.get("registered", 0)} registrados</p>{move_text}</section>'
+        f'<section class="card"><h3>Home network <span class="count">{len(online)} online</span></h3>'
+        f'<ul>{device_rows or row(None, "No inventory")}</ul>'
+        f'<p class="muted small note">Names follow MAC addresses, even when IP addresses change · '
+        f'{naming.get("registered", 0)} registered</p>{move_text}</section>'
     )
 
     peers = data.get('peers') or []
@@ -1084,7 +1084,7 @@ def render(data, login, nonce):
         row(
             p['online'],
             p['name'],
-            (p['os'] + (' · directo' if p['direct'] else ' · relay'))
+            (p['os'] + (' · direct' if p['direct'] else ' · relay'))
             if p['online']
             else f'{p["os"]} · {ago(p["seen"])}',
         )
@@ -1092,7 +1092,7 @@ def render(data, login, nonce):
     )
     tail_card = (
         f'<section class="card"><h3>Tailscale <span class="count">{sum(p["online"] for p in peers)}'
-        f'/{len(peers)}</span></h3><ul>{peer_rows or row(None, "Sin datos")}</ul></section>'
+        f'/{len(peers)}</span></h3><ul>{peer_rows or row(None, "No data")}</ul></section>'
     )
 
     backup = data.get('backups')
@@ -1100,14 +1100,14 @@ def render(data, login, nonce):
     backup_row = (
         row(
             (time.time() - backup['at']) < 36 * 3600,
-            'Respaldo cifrado',
-            f'{ago(backup["at"])} · {size(backup["bytes"])} · {backup["count"]} copias',
+            'Encrypted backup',
+            f'{ago(backup["at"])} · {size(backup["bytes"])} · {backup["count"]} copies',
         )
         if backup
-        else row(False, 'Respaldo cifrado', 'sin copias')
+        else row(False, 'Encrypted backup', 'no backups')
     )
     repo_rows = ''.join(row(True, r['name'], f'{r["branch"]} · {ago(r["at"])}') for r in repos)
-    safe_card = f'<section class="card"><h3>Respaldos y código</h3><ul>{backup_row}{repo_rows}</ul></section>'
+    safe_card = f'<section class="card"><h3>Backups and source</h3><ul>{backup_row}{repo_rows}</ul></section>'
 
     router_link = ''
     for device in data.get('devices') or []:
@@ -1121,8 +1121,8 @@ def render(data, login, nonce):
             router_link = f'<a href="http://{address}/">Router<span>›</span></a>'
             break
     links = (
-        '<section class="card"><h3>Accesos</h3><div class="links">'
-        '<a href="/admin/">Panel de Pi-hole<span>›</span></a>' + router_link + '</div></section>'
+        '<section class="card"><h3>Quick links</h3><div class="links">'
+        '<a href="/admin/">Pi-hole panel<span>›</span></a>' + router_link + '</div></section>'
     )
 
     body = (
@@ -1143,22 +1143,22 @@ def render(data, login, nonce):
         + safe_card
         + '</div>'
         + links
-        + f'<footer>Actualizado {e(time.strftime("%H:%M:%S", time.localtime(data["at"])))} · '
-        f'solo tu cuenta de Tailscale</footer>'
+        + f'<footer>Updated {e(time.strftime("%H:%M:%S", time.localtime(data["at"])))} · '
+        f'your Tailscale account only</footer>'
     )
     return page(body, nonce)
 
 
 TABS = (
-    ('home', '/', 'Inicio', 'M3 11 12 4l9 7v9h-6v-6H9v6H3z'),
+    ('home', '/', 'Home', 'M3 11 12 4l9 7v9h-6v-6H9v6H3z'),
     (
         'map',
         '/network-map#map',
-        'Red',
+        'Network',
         'M12 3a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM5 15a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm14 0a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM12 9v3m0 0-5 4m5-4 5 4',
     ),
-    ('traffic', '/network-map#traffic', 'Tráfico', 'M3 17l5-6 4 3 6-8 3 3M3 21h18'),
-    ('ports', '/network-map#ports', 'Puertos', 'M4 6h16v12H4zM8 10h2v4H8zm6 0h2v4h-2z'),
+    ('traffic', '/network-map#traffic', 'Traffic', 'M3 17l5-6 4 3 6-8 3 3M3 21h18'),
+    ('ports', '/network-map#ports', 'Ports', 'M4 6h16v12H4zM8 10h2v4H8zm6 0h2v4h-2z'),
 )
 
 
@@ -1170,16 +1170,16 @@ def tab_bar(active):
         f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{icon}"/></svg><span>{label}</span></a>'
         for key, href, label, icon in TABS
     )
-    return f'<nav class="tabbar" aria-label="Secciones">{links}</nav>'
+    return f'<nav class="tabbar" aria-label="Sections">{links}</nav>'
 
 
-OFFLINE = """<!doctype html><html lang="es"><head><meta charset="utf-8">
+OFFLINE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0e0e0e">
 <title>LEÓN Home</title><style>body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#0e0e0e;color:#eeeae3;
 font:15px/1.5 -apple-system,system-ui,sans-serif;text-align:center;padding:24px}img{width:64px;height:64px}p{color:#a39e94;max-width:300px}
 a{display:inline-block;margin-top:12px;color:#111;background:#eeeae3;border-radius:999px;padding:10px 18px;text-decoration:none}</style></head>
-<body><div><img src="/brand/symbol.png" alt=""><h1>Sin conexión</h1><p>No se alcanza LEÓN Home. Conecta Tailscale y vuelve a intentar.
-No se guardan lecturas en este teléfono.</p><a href="/">Reintentar</a></div></body></html>""".encode(
+<body><div><img src="/brand/symbol.png" alt=""><h1>Offline</h1><p>LEÓN Home is unreachable. Connect Tailscale and try again.
+Readings are not stored on this phone.</p><a href="/">Try again</a></div></body></html>""".encode(
     'utf-8'
 )
 
@@ -1225,7 +1225,7 @@ def router_unlock(phrase):
 
 
 def page(body, nonce):
-    return f'''<!doctype html><html lang="es"><head><meta charset="utf-8">
+    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0e0e0e"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">

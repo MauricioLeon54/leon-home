@@ -9,3 +9,5 @@ rust/leon-netmap/target/
 test-results/
 *.pem
 *.key
+.codegraph/
+.code-review-graph/
