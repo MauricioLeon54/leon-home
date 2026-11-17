@@ -1,0 +1,19 @@
+[tool.ruff]
+required-version = "==0.17.5"
+target-version = "py39"
+line-length = 100
+extend-exclude = [".build", "dist", ".swiftpm", ".codegraph", ".code-review-graph", "node_modules", "private"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests and isolated Linux entrypoints explicitly load reviewed sibling modules after sys.path setup.
+"Tests/CollectorTests/*.py" = ["E402"]
+"Tests/SharingTests/*.py" = ["E402"]
+"deploy/leon-home/files/usr/local/lib/leon-overview/overview.py" = ["E402"]
+"deploy/leon-home/files/usr/local/lib/leon-router/monitor.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "single"
+line-ending = "lf"

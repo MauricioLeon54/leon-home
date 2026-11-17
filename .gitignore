@@ -1,0 +1,11 @@
+node_modules/
+.build/
+dist/
+.venv/
+.ruff_cache/
+private/
+**/__pycache__/
+rust/leon-netmap/target/
+test-results/
+*.pem
+*.key

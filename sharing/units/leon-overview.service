@@ -1,0 +1,27 @@
+[Unit]
+Description=LEÓN Home private phone panel
+After=network-online.target pihole-FTL.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 -I /opt/leon-home/current/app/family.py
+User=leon-overview
+Group=leon-home-health
+SupplementaryGroups=leon-overview leon-home-control
+StateDirectory=leon-overview
+RuntimeDirectory=leon-home-http
+RuntimeDirectoryMode=0750
+EnvironmentFile=/etc/leon-home/overview.env
+Environment=HOME=/
+Restart=on-failure
+RestartSec=5
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

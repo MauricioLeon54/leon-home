@@ -1,0 +1,106 @@
+/* Family edition: the existing LEÓN visual system, with one clear release decision. */
+.updates {
+  max-width: 42rem;
+  padding-bottom: 3rem;
+}
+.updates .back {
+  display: inline-block;
+  color: var(--muted, #a8a8a3);
+  margin-bottom: 2.5rem;
+  text-decoration: none;
+}
+.release-mark {
+  display: block;
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  margin-bottom: 1.5rem;
+}
+.updates h1 {
+  font-size: clamp(2.2rem, 8vw, 3.8rem);
+  letter-spacing: -0.055em;
+  line-height: 1.06;
+  margin: 0 0 1rem;
+}
+.updates .intro {
+  color: #b9b9b2;
+  font-size: 1.1rem;
+  line-height: 1.6;
+  max-width: 29rem;
+}
+.release {
+  margin: 2.4rem 0 1.5rem;
+  padding: 1.8rem;
+  background: #1d1d1b;
+  border: 1px solid #3c3c36;
+  border-radius: 22px;
+}
+.release h2 {
+  margin: 0.8rem 0;
+  font-size: 1.7rem;
+  letter-spacing: -0.035em;
+}
+#release-status,
+#release-version {
+  color: #b9b9b2;
+  font-size: 0.88rem;
+}
+#release-notes {
+  padding-left: 1.2rem;
+  line-height: 1.65;
+}
+#release-message {
+  line-height: 1.6;
+}
+.release-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1.6rem;
+}
+.release-actions button {
+  border-radius: 999px;
+  padding: 0.85rem 1.15rem;
+  background: #ebeae3;
+  color: #171715;
+  font: inherit;
+  font-weight: 650;
+  border: 1px solid #ebeae3;
+  cursor: pointer;
+}
+.release-actions button:last-child {
+  background: transparent;
+  color: #ebeae3;
+  border-color: #5b5b54;
+}
+.release-actions button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+.release-actions button:focus-visible,
+.back:focus-visible {
+  outline: 3px solid #8ec2a7;
+  outline-offset: 5px;
+}
+#release-confirm {
+  max-width: min(30rem, calc(100vw - 3rem));
+  padding: 1.8rem;
+  color: #ebeae3;
+  background: #1d1d1b;
+  border: 1px solid #5b5b54;
+  border-radius: 22px;
+}
+#release-confirm::backdrop {
+  background: #000b;
+}
+#release-confirm p {
+  line-height: 1.6;
+}
+@media (max-width: 420px) {
+  .release {
+    padding: 1.2rem;
+  }
+  .release-actions button {
+    width: 100%;
+  }
+}

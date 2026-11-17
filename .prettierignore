@@ -1,0 +1,12 @@
+.build/
+dist/
+.swiftpm/
+.codegraph/
+.code-review-graph/
+.venv/
+.ruff_cache/
+node_modules/
+private/
+pnpm-lock.yaml
+**/__pycache__/
+rust/leon-netmap/target/

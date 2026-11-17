@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "owner": "owner@example.test",
+  "supportLogin": "maintainer@example.test",
+  "repository": "example/leon-home",
+  "interface": "eth0",
+  "hostname": "leon-casa"
+}

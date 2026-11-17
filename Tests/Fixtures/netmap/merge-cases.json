@@ -1,0 +1,251 @@
+{
+  "about": "Shared netmap.py / Rust merge contract. Inputs are parsed pass observations; expected is the state document (durationMs fixed at 1234, subnet fixed).",
+  "cases": [
+    {
+      "name": "first pass with ping, ARP-only and stale neighbours",
+      "now": 2000000000,
+      "stored": null,
+      "rtts": {
+        "192.168.3.1": 0.512,
+        "192.168.3.20": 3.25
+      },
+      "neighbours": [
+        ["192.168.3.1", "aa:bb:cc:dd:ee:01", "REACHABLE"],
+        ["192.168.3.30", "aa:bb:cc:dd:ee:1e", "DELAY"],
+        ["192.168.3.31", "aa:bb:cc:dd:ee:1f", "STALE"],
+        ["192.168.3.32", "aa:bb:cc:dd:ee:20", "PERMANENT"]
+      ],
+      "router": "192.168.3.1",
+      "expected": {
+        "devices": [
+          {
+            "ip": "192.168.3.1",
+            "first_seen": 2000000000,
+            "last_seen": 2000000000,
+            "strip": [1],
+            "mac": "aa:bb:cc:dd:ee:01",
+            "online": 1,
+            "rtt_ms": 0.512,
+            "role": "router"
+          },
+          {
+            "ip": "192.168.3.20",
+            "first_seen": 2000000000,
+            "last_seen": 2000000000,
+            "strip": [1],
+            "online": 1,
+            "rtt_ms": 3.25,
+            "role": ""
+          },
+          {
+            "ip": "192.168.3.30",
+            "first_seen": 2000000000,
+            "last_seen": 2000000000,
+            "strip": [1],
+            "mac": "aa:bb:cc:dd:ee:1e",
+            "online": 1,
+            "rtt_ms": null,
+            "role": ""
+          }
+        ],
+        "lastScan": {
+          "ts": 2000000000,
+          "durationMs": 1234,
+          "subnet": "192.168.3.0/24",
+          "online": 3
+        }
+      }
+    },
+    {
+      "name": "history: presence strips, kept RTT, forgetting, unknown fields and damage",
+      "now": 2000000000,
+      "stored": {
+        "devices": [
+          {
+            "ip": "192.168.3.1",
+            "first_seen": 1999222400,
+            "last_seen": 1999999700,
+            "strip": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            "mac": "aa:bb:cc:dd:ee:01",
+            "online": 1,
+            "rtt_ms": 0.4,
+            "role": "router"
+          },
+          {
+            "ip": "192.168.3.40",
+            "first_seen": 1999568000,
+            "last_seen": 1999996400,
+            "strip": [1, 0, 1],
+            "mac": "aa:bb:cc:dd:ee:28",
+            "online": 0,
+            "rtt_ms": 12.5,
+            "role": "",
+            "label": {
+              "name": "Tele",
+              "kind": "tv"
+            }
+          },
+          {
+            "ip": "192.168.3.41",
+            "first_seen": 1996544000,
+            "last_seen": 1997407999,
+            "strip": [0],
+            "online": 0,
+            "role": ""
+          },
+          {
+            "ip": "192.168.3.42",
+            "first_seen": 1996544000,
+            "last_seen": 1997408000,
+            "strip": [0],
+            "online": 0,
+            "role": ""
+          },
+          {
+            "ip": "192.168.3.43",
+            "first_seen": 1.5,
+            "last_seen": "soon",
+            "strip": [1, true, 2, 0, 1.0],
+            "mac": 7,
+            "role": 3,
+            "rtt_ms": "x",
+            "online": "yes"
+          },
+          {
+            "ip": "192.168.3.300"
+          },
+          {
+            "ip": 5
+          },
+          "junk",
+          {
+            "name": "no address"
+          },
+          {
+            "ip": "192.168.3.50",
+            "first_seen": 1999913600,
+            "last_seen": 1999999400,
+            "strip": [1],
+            "online": 1,
+            "role": "router",
+            "rtt_ms": 1
+          }
+        ],
+        "lastScan": {
+          "ts": 1999999700,
+          "durationMs": 8000,
+          "subnet": "192.168.3.0/24",
+          "online": 2
+        }
+      },
+      "rtts": {
+        "192.168.3.1": 0.61,
+        "192.168.3.43": 7.0
+      },
+      "neighbours": [
+        ["192.168.3.1", "aa:bb:cc:dd:ee:01", "REACHABLE"],
+        ["192.168.3.40", "aa:bb:cc:dd:ee:29", "STALE"]
+      ],
+      "router": "192.168.3.1",
+      "expected": {
+        "devices": [
+          {
+            "ip": "192.168.3.1",
+            "first_seen": 1999222400,
+            "last_seen": 2000000000,
+            "strip": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+            "mac": "aa:bb:cc:dd:ee:01",
+            "online": 1,
+            "rtt_ms": 0.61,
+            "role": "router"
+          },
+          {
+            "ip": "192.168.3.40",
+            "first_seen": 1999568000,
+            "last_seen": 1999996400,
+            "strip": [1, 0, 1, 0],
+            "mac": "aa:bb:cc:dd:ee:29",
+            "online": 0,
+            "rtt_ms": 12.5,
+            "role": "",
+            "label": {
+              "name": "Tele",
+              "kind": "tv"
+            }
+          },
+          {
+            "ip": "192.168.3.42",
+            "first_seen": 1996544000,
+            "last_seen": 1997408000,
+            "strip": [0, 0],
+            "online": 0,
+            "role": ""
+          },
+          {
+            "ip": "192.168.3.43",
+            "first_seen": 0,
+            "last_seen": 2000000000,
+            "strip": [1, 0, 1],
+            "role": "",
+            "rtt_ms": 7.0,
+            "online": 1
+          },
+          {
+            "ip": "192.168.3.50",
+            "first_seen": 1999913600,
+            "last_seen": 1999999400,
+            "strip": [1, 0],
+            "online": 0,
+            "role": "router",
+            "rtt_ms": 1
+          }
+        ],
+        "lastScan": {
+          "ts": 2000000000,
+          "durationMs": 1234,
+          "subnet": "192.168.3.0/24",
+          "online": 2
+        }
+      }
+    },
+    {
+      "name": "no default route and nothing answering",
+      "now": 2000000000,
+      "stored": {
+        "devices": [
+          {
+            "ip": "10.0.0.9",
+            "first_seen": 1999913600,
+            "last_seen": 1999999940,
+            "strip": [1],
+            "online": 1,
+            "role": "",
+            "rtt_ms": 2.0
+          }
+        ]
+      },
+      "rtts": {},
+      "neighbours": [],
+      "router": null,
+      "expected": {
+        "devices": [
+          {
+            "ip": "10.0.0.9",
+            "first_seen": 1999913600,
+            "last_seen": 1999999940,
+            "strip": [1, 0],
+            "online": 0,
+            "role": "",
+            "rtt_ms": 2.0
+          }
+        ],
+        "lastScan": {
+          "ts": 2000000000,
+          "durationMs": 1234,
+          "subnet": "192.168.3.0/24",
+          "online": 0
+        }
+      }
+    }
+  ]
+}

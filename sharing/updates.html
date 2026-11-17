@@ -1,0 +1,27 @@
+<main class="updates">
+  <a class="back" href="/">Volver a inicio</a>
+  <img class="release-mark" src="/brand/symbol.png" alt="LEÓN Home" />
+  <h1>Tu red, al día.</h1>
+  <p class="intro">Las mejoras llegan aquí. Tú decides cuándo instalarlas.</p>
+  <section class="release" aria-labelledby="release-title">
+    <p id="release-status" role="status" aria-live="polite">Consultando tu Raspberry…</p>
+    <h2 id="release-title">Actualizaciones</h2>
+    <p id="release-version"></p>
+    <ul id="release-notes"></ul>
+    <p id="release-message">Pi-hole seguirá funcionando mientras se actualiza el panel.</p>
+    <div class="release-actions">
+      <button id="release-apply" hidden>Aceptar e instalar</button
+      ><button id="release-check">Buscar actualizaciones</button>
+    </div>
+  </section>
+  <p class="small muted">
+    Esta página actualiza LEÓN Home. Las actualizaciones del sistema y de Pi-hole se revisan por separado.
+  </p>
+  <dialog id="release-confirm">
+    <h2>¿Instalar la actualización?</h2>
+    <p>El panel se reiniciará brevemente. Guardaremos la versión anterior para recuperarla si algo falla.</p>
+    <div class="release-actions">
+      <button id="release-confirm-yes">Instalar ahora</button><button id="release-confirm-no">Más tarde</button>
+    </div>
+  </dialog>
+</main>

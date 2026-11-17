@@ -1,0 +1,26 @@
+[package]
+name = "leon-netmap"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "LEÓN Home read-only network inventory pass using unprivileged ICMP datagram sockets"
+license = "LicenseRef-proprietary"
+publish = false
+
+[dependencies]
+serde_json = "1.0.154"
+socket2 = "0.6.5"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = true

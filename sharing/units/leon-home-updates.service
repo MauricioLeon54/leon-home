@@ -1,0 +1,27 @@
+[Unit]
+Description=LEÓN Home signed application updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 -I /usr/local/lib/leon-home/runtime/run_updater.py
+StateDirectory=leon-home-updates
+StateDirectoryMode=0700
+RuntimeDirectory=leon-home-updates
+RuntimeDirectoryMode=0755
+UMask=0077
+SupplementaryGroups=leon-home-health leon-home-control
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=120
+ProtectSystem=strict
+ReadWritePaths=/opt/leon-home
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=160M
+
+[Install]
+WantedBy=multi-user.target

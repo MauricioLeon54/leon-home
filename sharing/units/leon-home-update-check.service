@@ -1,0 +1,15 @@
+[Unit]
+Description=Check signed LEÓN Home releases without installing
+Requires=leon-home-updates.service
+After=leon-home-updates.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/lib/leon-home/runtime/run_updater.py --check
+TimeoutStartSec=10
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX

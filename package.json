@@ -1,0 +1,44 @@
+{
+  "name": "leon-home-development",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "lint:web": "eslint . --max-warnings 0",
+    "lint:web:fix": "pnpm lint:web --fix",
+    "format:web": "prettier --write . --ignore-unknown",
+    "format:web:check": "prettier --check . --ignore-unknown",
+    "lint:python": ".venv/bin/ruff check .",
+    "format:python": ".venv/bin/ruff format .",
+    "format:python:check": ".venv/bin/ruff format --check .",
+    "lint:rust": "cd rust/leon-netmap && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings",
+    "format:rust": "cd rust/leon-netmap && cargo fmt",
+    "test:rust": "cd rust/leon-netmap && cargo test --locked",
+    "build:netmap": "./scripts/build-netmap-rust.sh",
+    "lint": "pnpm lint:web && pnpm lint:python && pnpm lint:rust",
+    "format": "pnpm format:web && pnpm format:python && pnpm format:rust",
+    "format:check": "pnpm format:web:check && pnpm format:python:check && pnpm format:rust:check",
+    "format:rust:check": "cd rust/leon-netmap && cargo fmt --check",
+    "test:web": "pnpm build:web && node --test Tests/WebTests/*.test.mjs",
+    "test:python": "python3 -B -m unittest discover -s Tests/SharingTests -v",
+    "check": "pnpm lint && pnpm format:web:check && pnpm format:python:check && pnpm test:web && pnpm test:python && pnpm test:rust",
+    "typecheck": "tsc --project tsconfig.web.json --noEmit && tsc --project tsconfig.worker.json --noEmit",
+    "build:web": "node scripts/build-web.mjs",
+    "build:home": "pnpm build:web && python3 sharing/build_release.py"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "esbuild": "0.28.2",
+    "eslint": "10.15.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-simple-import-sort": "14.0.0",
+    "globals": "17.14.0",
+    "playwright": "1.65.1",
+    "prettier": "3.10.1",
+    "typescript": "6.0.2",
+    "typescript-eslint": "8.72.0"
+  }
+}

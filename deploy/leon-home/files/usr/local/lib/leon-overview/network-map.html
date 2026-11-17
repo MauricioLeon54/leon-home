@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#0e0e0e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="LEÓN Home" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" href="/brand/symbol.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>Red · LEÓN Home</title>
+    <link rel="stylesheet" href="/network-map/assets/network-map.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="/brand/symbol.png" alt="" />
+        <h1 id="heading">Red</h1>
+        <div class="chips">
+          <span class="chip" id="scan-chip"><i class="dot"></i>Cargando…</span>
+          <span class="chip" id="router-chip"><i class="dot"></i>Router</span>
+        </div>
+      </header>
+      <section class="card banner" id="locked" hidden>
+        <h3>Tráfico del router en pausa</h3>
+        <p id="locked-text"></p>
+        <form id="unlock-form" class="unlock" autocomplete="on">
+          <input
+            class="sr"
+            type="text"
+            name="username"
+            autocomplete="username"
+            value="leon-vault"
+            readonly
+            tabindex="-1"
+            aria-hidden="true"
+          />
+          <input
+            type="password"
+            name="password"
+            id="unlock-password"
+            autocomplete="current-password"
+            required
+            maxlength="1024"
+            placeholder="Frase de la bóveda LEÓN"
+            aria-label="Frase de la bóveda LEÓN"
+            enterkeyhint="go"
+          />
+          <button type="submit" class="primary" id="unlock-submit">Desbloquear</button>
+        </form>
+        <p class="small muted" id="unlock-status" role="status">
+          La misma frase que usas en la Mac. Con Face ID si la guardaste en el iPhone. También desde la Mac:
+          <code>python3 scripts/network_equipment_unlock.py</code>
+        </p>
+      </section>
+
+      <section class="view" id="view-map" aria-label="Mapa">
+        <div class="workspace">
+          <div class="map" aria-label="Mapa interactivo de dispositivos">
+            <div class="status" role="status">Cargando lecturas…</div>
+            <div class="canvas">
+              <svg aria-hidden="true"></svg>
+              <div id="nodes"></div>
+            </div>
+            <div class="empty" hidden></div>
+            <div class="controls">
+              <button id="out" aria-label="Alejar">−</button><button id="in" aria-label="Acercar">+</button
+              ><button id="fit">Encuadrar</button>
+            </div>
+          </div>
+          <aside class="card inspector sheet" id="inspector">
+            <button class="grab" id="close-sheet" aria-label="Cerrar detalle"></button>
+            <h2 id="title">Dispositivos de casa</h2>
+            <p class="muted small" id="description">
+              Toca un dispositivo para ver su detalle. Arrastra para ordenar el mapa.
+            </p>
+            <form id="rename" class="unlock" hidden>
+              <input
+                type="text"
+                id="rename-input"
+                maxlength="40"
+                autocomplete="off"
+                enterkeyhint="done"
+                placeholder="Nombre del dispositivo"
+                aria-label="Nombre del dispositivo"
+              /><button type="submit" class="primary" id="rename-submit">Guardar</button>
+            </form>
+            <p class="small muted" id="rename-status" role="status"></p>
+            <ul class="switches pause" id="pause-row" hidden>
+              <li>
+                <div class="info"><b>Acceso a la red</b><small id="pause-note"></small></div>
+                <input type="checkbox" class="switch" role="switch" id="pause-switch" aria-label="Acceso a la red" />
+              </li>
+            </ul>
+            <div class="schedule" id="schedule" hidden>
+              <div class="sched-head">
+                <div class="info"><b>Pausa programada</b><small id="sched-summary"></small></div>
+                <input
+                  type="checkbox"
+                  class="switch"
+                  role="switch"
+                  id="sched-switch"
+                  aria-label="Pausa programada"
+                  aria-describedby="sched-summary"
+                />
+              </div>
+              <button type="button" class="link" id="sched-edit" hidden>Editar horario</button>
+              <div class="sched-editor" id="sched-editor" hidden>
+                <div class="days" id="sched-days" role="group" aria-label="Días"></div>
+                <div class="times">
+                  <label>Desde<input type="time" id="sched-start" /></label
+                  ><label>Hasta<input type="time" id="sched-end" /></label>
+                </div>
+                <div class="buttons">
+                  <button type="button" class="primary" id="sched-save">Guardar horario</button
+                  ><button type="button" id="sched-cancel">Cancelar</button>
+                </div>
+              </div>
+              <p class="small muted" id="sched-status" role="status"></p>
+            </div>
+            <dl id="details"></dl>
+            <svg
+              class="chart"
+              id="device-chart"
+              viewBox="0 0 300 120"
+              preserveAspectRatio="none"
+              hidden
+              aria-hidden="true"
+            ></svg>
+            <p class="note">
+              Las líneas agrupan el inventario descubierto: no son cables ni el recorrido del tráfico. La conexión la
+              informa el router. Color: verde visto, gris no visto, ámbar desconocido. Grosor: tráfico actual que
+              informa el router, no la velocidad del enlace. En el teléfono, la franja izquierda de cada tarjeta muestra
+              lo mismo.
+            </p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-traffic" aria-label="Tráfico">
+        <section class="card">
+          <h3>Internet <span class="count" id="net-at"></span></h3>
+          <div class="detail" id="net-tiles"></div>
+          <svg
+            class="chart"
+            id="net-chart"
+            viewBox="0 0 300 120"
+            preserveAspectRatio="none"
+            aria-label="Latencia a internet, 24 h"
+          ></svg>
+          <ul class="wifi-list" id="outages"></ul>
+          <p class="note">
+            Cada 30 s la Pi mide el router (ping), internet (conexión TCP a 1.1.1.1 y 9.9.9.9, sin datos) y el DNS del
+            router. Una caída son dos o más fallos seguidos: si el router responde, la causa probable es el proveedor o
+            el módem; si no, la red de casa. Los periodos sin medición no cuentan como caídas.
+          </p>
+        </section>
+        <section class="card">
+          <h3>Ahora <span class="count" id="traffic-at"></span></h3>
+          <div class="totals">
+            <div class="total">
+              <span><i class="sw d"></i>Bajada</span><b id="total-down">—</b>
+            </div>
+            <div class="total">
+              <span><i class="sw u"></i>Subida</span><b id="total-up">—</b>
+            </div>
+          </div>
+          <svg
+            class="chart"
+            id="total-chart"
+            viewBox="0 0 300 120"
+            preserveAspectRatio="none"
+            aria-label="Tráfico de los últimos minutos"
+          ></svg>
+          <div class="axis"><span id="axis-start"></span><span>ahora</span></div>
+          <p class="note">
+            Suma de las tasas que el router informa por dispositivo activo. No es una prueba de velocidad ni la
+            capacidad del enlace.
+          </p>
+        </section>
+        <section class="card devices">
+          <h3>Por dispositivo <span class="count" id="device-count"></span></h3>
+          <ul id="device-list"></ul>
+        </section>
+      </section>
+
+      <section class="view" id="view-ports" aria-label="Puertos">
+        <section class="card">
+          <h3>Router · puertos Ethernet <span class="count" id="ports-at"></span></h3>
+          <div class="panel" id="panel" role="listbox" aria-label="Puertos del router"></div>
+          <div id="port-detail"><p class="muted small">Selecciona un puerto.</p></div>
+        </section>
+        <section class="card">
+          <h3>Wi-Fi <span class="count" id="wifi-at"></span></h3>
+          <div id="wifi"></div>
+          <p class="note">
+            Banda y señal según el router (lo que mide en el punto de acceso). Débil: por debajo de −70 dBm.
+          </p>
+        </section>
+        <section class="card">
+          <h3>Cómo funciona</h3>
+          <p class="muted small">
+            Desactivar un puerto corta su enlace Ethernet, no la energía del equipo conectado. Solo se pueden desactivar
+            los puertos que autorizaste en la Pi (<code>/etc/leon-router/controllable-ports</code>); el puerto WAN y el
+            resto quedan protegidos para no perder el acceso. Activar un puerto siempre está permitido. LEÓN verifica el
+            resultado leyendo de nuevo el router y nunca repite una acción automáticamente.
+          </p>
+        </section>
+      </section>
+    </main>
+
+    <nav class="tabbar" aria-label="Secciones">
+      <a href="/" data-tab="home"
+        ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11 12 4l9 7v9h-6v-6H9v6H3z" /></svg
+        ><span>Inicio</span></a
+      >
+      <a href="#map" data-tab="map"
+        ><svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 3a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM5 15a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm14 0a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM12 9v3m0 0-5 4m5-4 5 4"
+          /></svg
+        ><span>Red</span></a
+      >
+      <a href="#traffic" data-tab="traffic"
+        ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-6 4 3 6-8 3 3M3 21h18" /></svg
+        ><span>Tráfico</span></a
+      >
+      <a href="#ports" data-tab="ports"
+        ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4zM8 10h2v4H8zm6 0h2v4h-2z" /></svg
+        ><span>Puertos</span></a
+      >
+    </nav>
+
+    <dialog id="confirm">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-text"></p>
+      <div class="buttons">
+        <button id="confirm-cancel">Cancelar</button><button id="confirm-ok" class="danger"></button>
+      </div>
+    </dialog>
+
+    <script type="module" nonce="__NONCE__" src="/network-map/assets/app.js"></script>
+  </body>
+</html>

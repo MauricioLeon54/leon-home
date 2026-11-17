@@ -1,0 +1,7 @@
+# Require mature releases instead of automatically bypassing the release-age policy.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+
+# Use the native binary shipped as an optional package; do not execute dependency install hooks.
+allowBuilds:
+  esbuild: false
