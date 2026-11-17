@@ -26,6 +26,8 @@ jobs:
           .venv/bin/python -m pip install -r requirements-dev.txt
           pnpm exec playwright install --with-deps chromium webkit
           rustup toolchain install 1.99.0 --profile minimal --component clippy --component rustfmt
+      - name: Allow unprivileged ICMP datagrams on the disposable runner
+        run: sudo sysctl -w 'net.ipv4.ping_group_range=0 2147483647'
       - name: Application and signature/authorization tests
         run: pnpm check
       - name: Actual Linux ARM64 executable and unprivileged socket tests

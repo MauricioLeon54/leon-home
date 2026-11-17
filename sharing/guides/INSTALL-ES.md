@@ -6,8 +6,8 @@ compilar Rust en la Raspberry.
 
 ## Antes de la visita
 
-Necesitas una Raspberry Pi4 de2GB, fuente adecuada5V/3A, Ethernet, microSD fiable y Raspberry Pi OS
-Lite **de64bits, Debian13**. Guarda las contraseñas de recuperación en tu propio gestor de
+Necesitas una Raspberry Pi 4 de 2 GB, fuente adecuada de 5 V/3 A, Ethernet, microSD fiable y Raspberry Pi OS
+Lite **de 64 bits, Debian 13**. Guarda las contraseñas de recuperación en tu propio gestor de
 contraseñas. Una pantalla no es necesaria si preparas SSH con Raspberry Pi Imager.
 
 Usa tu propia cuenta de Tailscale y protege su inicio de sesión. No copies la identidad Tailscale,
@@ -19,7 +19,7 @@ de soporte; solo se copia su parte **pública**. La llave privada se queda con q
 
 ## Preparar el sistema
 
-1. Graba Raspberry Pi OS Lite64bits con Imager. Usa un nombre propio para esta Raspberry,
+1. Graba Raspberry Pi OS Lite de 64 bits con Imager. Usa un nombre propio para esta Raspberry,
    activa SSH con una llave y configura un usuario de recuperación con contraseña fuerte.
    Mantén una vía de recuperación local; no desactives accesos sin comprobar la llave.
 2. Conecta Ethernet y la fuente. Reserva su dirección en el DHCP del router; no cambies todavía

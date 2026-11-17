@@ -23,7 +23,7 @@ separada. Esto también se aplica a cambiar la clave de firma o soportar otra ve
 
 El repositorio público contiene una distribución limpia, sin historial ni configuración del
 laboratorio personal. Los archivos de cada casa quedan fuera de las versiones. El producto
-objetivo inicial es Raspberry Pi4, ARM64, Debian13; no se compila en el equipo del usuario final.
+objetivo inicial es Raspberry Pi 4, ARM64, Debian 13; no se compila en el equipo del usuario final.
 
 1. Cambia el código y ejecuta las comprobaciones locales/CI. Revisa compatibilidad y dependencias.
 2. Construye web y el ejecutable ARM64 en el entorno de desarrollo. Revisa el contenido público.

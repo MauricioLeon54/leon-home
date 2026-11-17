@@ -7,10 +7,10 @@ usuarios en un tailnet. El responsable de soporte no necesita la aplicación de 
    Entrega la invitación en privado y acepta con la identidad correcta. No publiques enlaces de
    invitación ni claves de autenticación en GitHub.
 2. Ajusta los permisos en ambos tailnets. En el del dueño permite al teléfono del dueño DNS
-   TCP/UDP53 y HTTPS443 hacia esa Pi; al responsable de soporte, solo TCP22 hacia esa Pi.
-   En el tailnet de soporte permite salida a esa Pi compartida por TCP22.
+   TCP/UDP 53 y HTTPS 443 hacia esa Pi; al responsable de soporte, solo TCP 22 hacia esa Pi.
+   En el tailnet de soporte permite salida a esa Pi compartida por TCP 22.
 3. Revisa las reglas amplias existentes. Añadir una regla estrecha no cancela una regla anterior
-   que permita `*` a `*`. Valida pruebas que denieguen a soporte443/53 y otros dispositivos.
+   que permita `*` a `*`. Valida pruebas que denieguen a soporte 443/53 y otros dispositivos.
 4. Usa OpenSSH con llave propia y host verificado. Compartir por Tailscale no elimina la
    autenticación SSH. No actives Tailscale SSH ni copies llaves de otras máquinas por conveniencia.
 
