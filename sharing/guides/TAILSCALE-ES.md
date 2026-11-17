@@ -41,6 +41,15 @@ cabeceras de dueño conectándose a un puerto local abierto.
 
 ## Qué puede hacer soporte
 
+Antes de la visita, crea una llave exclusiva de soporte en tu propio equipo; protege su parte
+privada con una frase y tu agente SSH. El instalador recibe únicamente el archivo terminado en
+`.pub`. Por ejemplo, `ssh-keygen -t ed25519 -f ~/.ssh/leon_home_support_ed25519`. No sobrescribas
+una llave existente ni copies la privada a la Raspberry.
+
+Al conectar, selecciona esa llave con `-i ~/.ssh/leon_home_support_ed25519` y usa
+`-o IdentitiesOnly=yes -o StrictHostKeyChecking=yes`, después de registrar la huella del host
+por una vía confiable. Puedes guardar estos ajustes en un alias privado de SSH.
+
 La llave configurada abre una cuenta separada `leon-support` con un comando forzado:
 
 ```sh

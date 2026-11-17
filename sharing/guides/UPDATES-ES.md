@@ -47,6 +47,30 @@ un aviso de mantenimiento; no fuerces el cambio para saltarte esa comprobación.
 firma y su recuperación deben formar parte del plan del mantenedor: perderla impide firmar
 nuevas versiones aceptables sin volver a establecer confianza con cada instalación.
 
+## Preparar una publicación desde el Mac del mantenedor
+
+La clave existente se reutiliza desde el Llavero; no generes otra para una actualización.
+Si aún no existe una clave, su creación inicial se hace una sola vez con la operación `init`.
+Para las siguientes publicaciones compila la herramienta y usa `sign` mediante el constructor:
+
+```sh
+mkdir -p .build
+swiftc sharing/sign_release.swift -o .build/LeonReleaseSigner
+pnpm check
+pnpm build:netmap
+python3 sharing/build_release.py \
+  --version 0.1.1 --sequence 2 \
+  --notes 'Describe aquí el cambio real para quien usa el panel.' \
+  --output dist/leon-home/0.1.1 \
+  --signer .build/LeonReleaseSigner
+```
+
+Los números anteriores son un ejemplo posterior a 0.1.0: aumenta ambos en cada publicación.
+El directorio de salida debe ser nuevo. El constructor no sobrescribe una versión existente.
+Publica sus cinco archivos en una Release estable solo después de verificar las pruebas, la
+firma y que corresponden al código revisado. No inicialices una clave nueva si el Llavero está
+bloqueado: desbloquéalo y recupera la clave original.
+
 ## Recuperación
 
 Si falla la activación, se restaura el enlace a la versión anterior y se reinicia el panel.
