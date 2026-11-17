@@ -1,6 +1,6 @@
 # LEÓN Home
 
-Pi-hole, un panel privado desde el teléfono y un inventario de red para una Raspberry Pi4 de2GB.
+Pi-hole, un panel privado desde el teléfono y un inventario de red para una Raspberry Pi 4 de 2 GB.
 Cada casa conserva su propia cuenta de Tailscale, configuración y credenciales. No necesitas
 una aplicación de Mac para usarlo.
 
@@ -17,7 +17,7 @@ no contiene el historial del laboratorio personal, la app de Mac ni inventarios 
 
 ## Alcance inicial
 
-Objetivo: Raspberry Pi OS Lite de64bits, Debian13, Pi-hole v6 y Tailscale. El instalador rechaza
+Objetivo: Raspberry Pi OS Lite de 64 bits, Debian 13, Pi-hole v6 y Tailscale. El instalador rechaza
 una instalación LEÓN existente para evitar sobrescribir otra casa. El panel es privado mediante
 Tailscale Serve; no requiere puertos públicos, Funnel ni un servidor web en Internet.
 
@@ -31,7 +31,7 @@ versión previa no sustituye un respaldo externo ni una fuente de alimentación 
 
 ## Desarrollo
 
-Necesitas Node24+, pnpm12.15.0, Python3.13+, Ruff y Rust según `rust/leon-netmap/rust-toolchain.toml`.
+Necesitas Node 24+, pnpm 12.15.0, Python 3.13+, Ruff y Rust según `rust/leon-netmap/rust-toolchain.toml`.
 La firma de publicaciones la hace el mantenedor con su clave local; las pruebas generan llaves
 temporales y nunca usan una clave de producción.
 
