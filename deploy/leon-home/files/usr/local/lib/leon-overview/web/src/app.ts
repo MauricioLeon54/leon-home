@@ -2,6 +2,7 @@ import { readJson } from './api.js';
 import type { Snapshot } from './contracts.js';
 import { createInternetView } from './internet.js';
 import { createMapView } from './map.js';
+import { bindDialog, bindDisclosures } from './motion.js';
 import { $, time } from './presentation.js';
 import { createRouterControls } from './routerControls.js';
 import { parseSnapshot } from './snapshot.js';
@@ -19,8 +20,8 @@ let failed = false,
 let controller: AbortController | null = null;
 const getState = () => state,
   isRefreshing = () => busy;
-const canvas = createMapView({ getState, scanCurrent, trafficCurrent, refresh, isRefreshing });
-const traffic = createTrafficView({ getState, trafficCurrent, select: canvas.select });
+const network = createMapView({ getState, scanCurrent, trafficCurrent, refresh, isRefreshing });
+const traffic = createTrafficView({ getState, trafficCurrent, select: network.select });
 const ports = createRouterControls({ getState, trafficCurrent, refresh, isRefreshing });
 const wifi = createWifiView({ getState, trafficCurrent });
 const internet = createInternetView({ getState });
@@ -43,7 +44,11 @@ function updateChips() {
     chip($('#scan-chip'), 'warn', failed ? 'Offline' : 'Loading…');
     return;
   }
-  chip($('#scan-chip'), scanCurrent() ? 'ok' : 'warn', failed ? 'Offline · previous readings' : scanCurrent() ? 'Scan ' + time(state.observedAt) : state.observedAt ? 'Stale scan' : 'Unknown scan');
+  chip(
+    $('#scan-chip'),
+    scanCurrent() ? 'ok' : 'warn',
+    failed ? 'Offline · previous readings' : scanCurrent() ? 'Scan ' + time(state.observedAt) : state.observedAt ? 'Earlier scan ' + time(state.observedAt) : 'No scan yet'
+  );
   const status = state.routerTelemetry?.status;
   chip($('#router-chip'), trafficCurrent() ? 'ok' : 'warn', trafficCurrent() ? 'Router live' : status === 'locked' ? 'Router locked' : status === 'error' ? 'Session ended' : 'No router reading');
   const locked = status === 'locked' || status === 'error';
@@ -55,19 +60,28 @@ function updateChips() {
 }
 
 // ---------------------------------------------------------------- views
+let shown: View | null = null;
 function show(requested: string) {
   const view = VIEWS.find(view => view === requested) ?? 'map';
   for (const name of VIEWS) $('#view-' + name).classList.toggle('active', name === view);
+  // Only a user's section change animates; the first paint and data refreshes stay still.
+  if (shown !== null && shown !== view) {
+    const section = $('#view-' + view);
+    section.classList.remove('entering');
+    void section.offsetWidth;
+    section.classList.add('entering');
+    window.scrollTo({ top: 0 });
+  }
+  shown = view;
   for (const link of document.querySelectorAll<HTMLAnchorElement>('.tabbar a')) link.toggleAttribute('aria-current', link.dataset.tab === view);
   $('#heading').textContent = TITLES[view];
   document.title = TITLES[view] + ' · LEÓN Home';
-  if (view === 'map' && state) requestAnimationFrame(canvas.fit);
 }
 window.addEventListener('hashchange', () => show(location.hash.slice(1)));
 function render() {
   updateChips();
   if (!state) return;
-  canvas.render();
+  network.render();
   traffic.render();
   ports.render();
   wifi.render();
@@ -82,17 +96,17 @@ async function refresh() {
     const response = await fetch('/network-map/data', { cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: controller.signal });
     if (!response.ok) throw Error('Unavailable');
     const value = parseSnapshot(await readJson(response));
-    const first = state === null;
     state = value;
     failed = false;
     render();
-    if (first) canvas.fit();
   } catch (error) {
     failed = true;
     if (state) render();
     else {
       updateChips();
-      $('.status').textContent = 'The map could not load. Check Tailscale.';
+      const status = $('.status');
+      status.textContent = 'The map could not load. Check Tailscale.';
+      status.hidden = false;
     }
   } finally {
     clearTimeout(timeout);
@@ -105,13 +119,12 @@ document.addEventListener('visibilitychange', () => {
   else void refresh();
 });
 window.addEventListener('pagehide', () => controller?.abort());
-window.addEventListener('resize', () => {
-  if (location.hash.slice(1) !== 'traffic') canvas.fit();
-});
 setInterval(() => {
-  if (!document.hidden && !canvas.isGesturing() && !ports.isActing()) void refresh();
+  if (!document.hidden && !ports.isActing()) void refresh();
 }, REFRESH_MS);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+for (const view of VIEWS) $('#view-' + view).addEventListener('animationend', event => (event.currentTarget instanceof HTMLElement ? event.currentTarget.classList.remove('entering') : undefined));
+bindDisclosures();
+bindDialog($('#confirm', HTMLDialogElement));
 show(location.hash.slice(1));
-canvas.transform();
 void refresh();

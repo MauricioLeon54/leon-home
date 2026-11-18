@@ -33,30 +33,39 @@ export function createWifiView({ getState, trafficCurrent }: ViewContext) {
     const box = $('#wifi'),
       wifi = state.routerTelemetry.wifi;
     box.replaceChildren();
-    $('#wifi-at').textContent = trafficCurrent() ? 'Router ' + time(state.routerTelemetry.observedAt) : 'No current reading';
+    $('#wifi-at').textContent = trafficCurrent() ? 'Router, ' + time(state.routerTelemetry.observedAt) : 'No current reading';
     if (!trafficCurrent()) {
       box.append(text('p', 'No current Wi-Fi reading. Unlock the router session to see readings.', 'muted small'));
       return;
     }
-    const networks = document.createElement('div');
+    // One row per broadcast network: name and band first, channel and current devices as detail.
+    const networks = document.createElement('ul');
     networks.className = 'networks';
+    const networkRow = (name: string, detail: string, state: string, on: boolean) => {
+      const row = document.createElement('li'),
+        info = document.createElement('div');
+      info.append(text('b', name), text('small', detail));
+      row.append(info, text('span', state, 'state' + (on ? ' good' : '')));
+      networks.append(row);
+    };
     for (const network of wifi?.networks || []) {
       if (!network.ssid) continue;
-      const parts = [network.ssid, bandName(network.band) !== 'Unknown' ? bandName(network.band) : network.band || 'unknown band'];
+      const band = bandName(network.band) !== 'Unknown' ? bandName(network.band) : network.band || 'Unknown band';
       // Counted from the router's own device list (devices on that band now), not its configured limits.
       const onBand = state.devices.filter(device => device.traffic?.band && String(device.traffic.band).startsWith(String(network.band).slice(0, 3))).length;
-      if (network.WifiEnable === false) parts.push('off');
-      else {
-        parts.push(network.Channel ? 'channel ' + network.Channel : 'auto channel');
-        parts.push(onBand + (onBand === 1 ? ' device' : ' devices'));
-      }
-      networks.append(text('span', parts.join(' · '), 'chip'));
+      const off = network.WifiEnable === false;
+      networkRow(
+        network.ssid + ', ' + band,
+        off ? 'Turned off' : (network.Channel ? 'Channel ' + network.Channel : 'Automatic channel') + ' · ' + onBand + (onBand === 1 ? ' device' : ' devices'),
+        off ? 'Off' : 'On',
+        !off
+      );
     }
     const guest = wifi?.guest;
     if (guest) {
       const minutes = typeof guest.restSeconds === 'number' ? Math.round(guest.restSeconds / 60) : null;
-      const left = minutes === null ? '' : minutes >= 60 ? ` · remaining ${Math.floor(minutes / 60)} h ${minutes % 60} min` : ` · remaining ${minutes} min`;
-      networks.append(text('span', `Guests${guest.ssid ? ' (' + guest.ssid + ')' : ''} · ` + (guest.enabled ? `active${left}` : 'off'), 'chip'));
+      const left = minutes === null ? 'No time limit reported' : minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min left` : `${minutes} min left`;
+      networkRow('Guest network' + (guest.ssid ? ', ' + guest.ssid : ''), guest.enabled ? left : 'Turned off', guest.enabled ? 'On' : 'Off', guest.enabled);
     }
     if (networks.childElementCount) box.append(networks);
     // Weakest first: the devices worth moving closer or switching band.

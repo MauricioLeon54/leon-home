@@ -115,10 +115,11 @@ for (const browserType of [chromium, webkit]) {
         assert.match(await page.locator('#details').innerText(), /0 Mbps/);
         await page.locator('#inspector.open').waitFor();
         await page.screenshot({ animations: 'disabled', path: `test-results/network-${browserType.name()}-${viewport.width}.png`, fullPage: true });
-        const before = await page.locator('.canvas').getAttribute('style');
         if (await page.locator('#close-sheet').isVisible()) await page.locator('#close-sheet').click();
-        await page.locator('#in').click();
-        assert.notEqual(await page.locator('.canvas').getAttribute('style'), before);
+        await page.locator('#device-search').fill('no such device');
+        assert.equal(await page.locator('button.node:visible').count(), 0);
+        await page.getByText('No device matches “no such device”.', { exact: true }).waitFor();
+        await page.locator('#device-search').fill('');
         await page.locator('a[data-tab=traffic]').click();
         await page.locator('#view-traffic.active').waitFor();
         assert.equal(await page.locator('#device-list li').count(), 1);

@@ -1,5 +1,6 @@
 import { postAction } from './api.js';
 import type { ControlContext, Feedback, Port } from './contracts.js';
+import { closeDialog, openDialog, swapText } from './motion.js';
 import { $, feedbackFor, speed, text, time } from './presentation.js';
 export function createRouterControls({ getState, trafficCurrent, refresh, isRefreshing }: ControlContext) {
   let selectedPort: number | null = null,
@@ -29,7 +30,7 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
       panel = $('#panel'),
       detail = $('#port-detail');
     panel.replaceChildren();
-    $('#ports-at').textContent = trafficCurrent() && ports ? 'Router ' + time(getState()?.routerTelemetry.observedAt) : 'No current reading';
+    $('#ports-at').textContent = trafficCurrent() && ports ? 'Router, ' + time(getState()?.routerTelemetry.observedAt) : 'No current reading';
     if (!trafficCurrent() || !ports) {
       panel.append(text('p', 'No current port reading. Unlock the router session to see readings.', 'muted small'));
       detail.replaceChildren();
@@ -70,7 +71,7 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
       return;
     }
     const tiles = document.createElement('div');
-    tiles.className = 'detail';
+    tiles.className = 'readings port-facts';
     for (const [label, value] of [
       ['Link', port.link === 'up' ? 'Connected' : port.link === 'down' ? 'No link' : 'Unknown'],
       ['Speed', port.link === 'up' ? speed(port.speedMbps) : '—'],
@@ -78,7 +79,7 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
       ['Status', port.enabled === true ? 'Enabled' : port.enabled === false ? 'Disabled' : 'Unknown'],
     ]) {
       const tile = document.createElement('div');
-      tile.className = 'tile';
+      tile.className = 'reading' + (value === 'Unknown' || value === '—' ? ' unknown' : '');
       tile.append(text('b', value), text('span', label));
       tiles.append(tile);
     }
@@ -152,11 +153,11 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
     ok.textContent = enabling ? 'Enable' : 'Disable';
     ok.className = enabling ? 'primary' : 'danger';
     ok.onclick = () => {
-      dialog.close();
+      closeDialog(dialog);
       void applyPort(port.port, enabling);
     };
-    $('#confirm-cancel', HTMLButtonElement).onclick = () => dialog.close();
-    dialog.showModal();
+    $('#confirm-cancel', HTMLButtonElement).onclick = () => closeDialog(dialog);
+    openDialog(dialog);
   }
   const UNLOCK_OUTCOMES = {
     current: ['good', 'Ready. The router session is active.'],
@@ -192,8 +193,7 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
       button.textContent = 'Unlock';
     }
     const [tone, message] = feedbackFor(UNLOCK_OUTCOMES, result, 'unlockFailed');
-    status.textContent = message;
-    status.className = 'small ' + tone;
+    swapText(status, message, 'small ' + tone);
     await refresh();
   }
   async function applyPort(number: number, enabled: boolean): Promise<void> {

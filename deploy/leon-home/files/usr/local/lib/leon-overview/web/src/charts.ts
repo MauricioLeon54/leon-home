@@ -16,7 +16,8 @@ export function splitSeries(points: ReadonlyArray<RatePoint>, index: 0 | 1, widt
   if (current.length) segments.push(current);
   return segments;
 }
-export function drawChart(svg: SVGSVGElement, points: ReadonlyArray<RatePoint>): void {
+/** Series classes carry meaning: 'd'/'u' are download/upload; latency uses its own neutral class. */
+export function drawChart(svg: SVGSVGElement, points: ReadonlyArray<RatePoint>, kinds: readonly [string, string] = ['d', 'u']): void {
   svg.replaceChildren();
   const width = 300,
     height = 120;
@@ -31,8 +32,8 @@ export function drawChart(svg: SVGSVGElement, points: ReadonlyArray<RatePoint>):
   }
   const max = Math.max(1, ...points.flatMap(point => [point[0], point[1]]).filter(value => typeof value === 'number')) * 1.15;
   for (const [index, kind] of [
-    [0, 'd'],
-    [1, 'u'],
+    [0, kinds[0]],
+    [1, kinds[1]],
   ] satisfies Array<readonly [0 | 1, string]>)
     for (const segment of splitSeries(points, index, width, height, max)) {
       const first = segment[0],

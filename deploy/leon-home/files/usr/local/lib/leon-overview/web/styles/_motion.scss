@@ -1,0 +1,241 @@
+// transitions.dev recipes shared by every page. Durations come from the token scale in _tokens.scss;
+// motion.ts sequences the classes and reads the same custom properties.
+@use 'tokens' as *;
+@use 'mixins' as *;
+
+:root {
+  --acc-expand: var(--duration-fast);
+  --acc-collapse: var(--duration-fast);
+  --acc-ease: var(--ease-smooth-out);
+  --modal-open-dur: var(--duration-fast);
+  --modal-close-dur: var(--duration-quick);
+  --modal-scale: var(--scale-large);
+  --modal-ease: var(--ease-smooth-out);
+  --text-swap-dur: var(--duration-quick);
+}
+
+// Disclosure: accordion (grid rows 0fr -> 1fr, chevron flip)
+.t-acc-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  text-align: left;
+
+  &:active:not(:disabled) {
+    transform: none;
+  }
+  @include hover {
+    &:not(:disabled):hover {
+      background: none;
+    }
+  }
+  .title {
+    font-size: var(--text-l);
+    font-weight: 600;
+    flex: none;
+  }
+  .summary {
+    flex: 1;
+    min-width: 0;
+    text-align: right;
+    color: color('ash');
+    font-size: var(--text-s);
+    @include ellipsis;
+
+    &.warn {
+      color: color('warn');
+    }
+  }
+  &.quiet .title {
+    font-size: var(--text-s);
+    font-weight: 500;
+    color: color('ash');
+  }
+}
+.t-acc-chevron {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  color: color('ash');
+  transform: scaleY(1);
+  transform-origin: center;
+  transition: transform var(--acc-expand) var(--acc-ease);
+
+  svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  path {
+    vector-effect: non-scaling-stroke;
+  }
+}
+.t-acc[data-open='true'] > .t-acc-head .t-acc-chevron {
+  transform: scaleY(-1);
+}
+.t-acc-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--acc-collapse) var(--acc-ease);
+}
+.t-acc[data-open='true'] > .t-acc-panel {
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--acc-expand) var(--acc-ease);
+}
+.t-acc-panel-inner {
+  overflow: hidden;
+  min-height: 0;
+  opacity: 0;
+  filter: blur(var(--blur-small));
+  transition:
+    opacity var(--acc-collapse) var(--acc-ease),
+    filter var(--acc-collapse) var(--acc-ease);
+}
+.t-acc[data-open='true'] > .t-acc-panel > .t-acc-panel-inner {
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity var(--acc-expand) var(--acc-ease),
+    filter var(--acc-expand) var(--acc-ease);
+}
+.t-acc-body {
+  padding: 4px 0 8px;
+}
+// Collapsed sections read as one compact list after the primary sections
+.section.t-acc {
+  margin-top: 0;
+  padding: 4px 0 0;
+
+  > .t-acc-head {
+    min-height: 56px;
+  }
+}
+.section:not(.t-acc) + .section.t-acc {
+  margin-top: 22px;
+}
+.t-acc.nested {
+  margin-top: 10px;
+  @include hairline;
+
+  > .t-acc-head {
+    min-height: $tap;
+  }
+}
+@include reduced-motion {
+  .t-acc-panel,
+  .t-acc-panel-inner,
+  .t-acc-chevron {
+    transition: none !important;
+  }
+}
+
+// Dialog: modal (open 250 ms from 0.96, close 150 ms)
+dialog {
+  border: 1px solid color('line-strong');
+  border-radius: 22px;
+  background: color('raised');
+  color: color('bone');
+  padding: 22px;
+  max-width: 380px;
+  width: calc(100% - 32px);
+
+  h2 {
+    margin: 0 0 8px;
+    font-size: 19px;
+  }
+  p {
+    color: color('ash');
+    margin: 0 0 10px;
+  }
+  .buttons {
+    justify-content: flex-end;
+    margin-top: 18px;
+  }
+  &::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    transition: opacity var(--modal-close-dur) var(--modal-ease);
+  }
+  &.is-open::backdrop {
+    opacity: 1;
+    transition: opacity var(--modal-open-dur) var(--modal-ease);
+  }
+}
+.t-modal {
+  transform-origin: center;
+  transform: scale(var(--modal-scale));
+  opacity: 0;
+  transition:
+    transform var(--modal-open-dur) var(--modal-ease),
+    opacity var(--modal-open-dur) var(--modal-ease);
+  will-change: transform, opacity;
+
+  &.is-open {
+    transform: scale(1);
+    opacity: 1;
+  }
+  &.is-closing {
+    transform: scale(var(--modal-scale));
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      transform var(--modal-close-dur) var(--modal-ease),
+      opacity var(--modal-close-dur) var(--modal-ease);
+  }
+}
+@include reduced-motion {
+  .t-modal,
+  dialog::backdrop {
+    transition: none !important;
+  }
+}
+
+// Outcome text: text swap
+.t-text-swap {
+  transform: translateY(0);
+  filter: blur(0);
+  opacity: 1;
+  transition:
+    transform var(--text-swap-dur) var(--ease-in-out),
+    filter var(--text-swap-dur) var(--ease-in-out),
+    opacity var(--text-swap-dur) var(--ease-in-out);
+
+  &.is-exit {
+    transform: translateY(calc(var(--distance-micro) * -1));
+    filter: blur(var(--blur-small));
+    opacity: 0;
+  }
+  &.is-enter-start {
+    transform: translateY(var(--distance-micro));
+    filter: blur(var(--blur-small));
+    opacity: 0;
+    transition: none;
+  }
+}
+@include reduced-motion {
+  .t-text-swap {
+    transition: none !important;
+  }
+}
+
+// Safety net for anything not covered by a recipe guard
+@include reduced-motion {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,140 @@
+// Updates: one release decision. Loaded after home.css, so it only adds this page's layout.
+@use 'tokens' as *;
+@use 'mixins' as *;
+
+body {
+  padding-bottom: calc(40px + env(safe-area-inset-bottom));
+}
+.updates {
+  max-width: 560px;
+
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: $tap;
+    color: color('ash');
+    text-decoration: none;
+  }
+  h1 {
+    font-size: 32px;
+    letter-spacing: -0.025em;
+  }
+  .intro {
+    color: color('ash');
+    max-width: 46ch;
+  }
+}
+.release-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0 10px;
+}
+.release-mark {
+  width: 36px;
+  height: 36px;
+}
+.release {
+  margin: 28px 0 18px;
+  padding: 20px;
+  background: color('surface');
+  border: 1px solid color('line');
+  border-radius: var(--radius-l);
+
+  h2 {
+    margin: 6px 0 4px;
+    font-size: var(--text-xl);
+    letter-spacing: -0.02em;
+  }
+  @include narrow {
+    padding: 16px;
+  }
+}
+#release-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: color('ash');
+  font-size: var(--text-s);
+
+  &::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: color('ash');
+  }
+}
+$phase-colors: (
+  'current': 'good',
+  'ready': 'warn',
+  'error': 'warn',
+);
+@each $phase, $tone in $phase-colors {
+  .release[data-phase='#{$phase}'] #release-status::before {
+    background: color($tone);
+  }
+}
+.release[data-phase='checking'] #release-status::before,
+.release[data-phase='installing'] #release-status::before {
+  animation: pending var(--duration-very-slow) var(--ease-in-out) infinite alternate;
+}
+@keyframes pending {
+  to {
+    opacity: 0.3;
+  }
+}
+#release-version {
+  color: color('ash');
+  font-size: var(--text-s);
+}
+#release-notes {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+
+  &:empty {
+    display: none;
+  }
+  li {
+    position: relative;
+    padding: 10px 0 10px 18px;
+    @include hairline;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 2px;
+      top: 19px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: color('ash');
+    }
+  }
+}
+#release-message {
+  margin-top: 14px;
+  color: color('ash');
+}
+.release[data-phase='error'] #release-message {
+  color: color('bone');
+}
+.release-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+
+  @include narrow {
+    button {
+      flex: 1 1 100%;
+    }
+  }
+}
+@include reduced-motion {
+  #release-status::before {
+    animation: none !important;
+  }
+}

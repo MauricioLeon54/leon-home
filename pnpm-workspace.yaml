@@ -5,3 +5,4 @@ minimumReleaseAgeStrict: true
 # Use the native binary shipped as an optional package; do not execute dependency install hooks.
 allowBuilds:
   esbuild: false
+  '@parcel/watcher': false

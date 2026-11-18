@@ -1,5 +1,6 @@
 import { postAction, readJson } from './api.js';
 import { choice, record, string } from './decode.js';
+import { bindDialog, closeDialog, openDialog, swapText } from './motion.js';
 import { $ } from './presentation.js';
 
 type Phase = 'current' | 'checking' | 'ready' | 'installing' | 'error';
@@ -46,7 +47,8 @@ function parse(value: unknown): State {
 function render() {
   if (!state) return;
   $('#release-status').textContent = state.phase === 'installing' ? 'Your Pi is working' : 'LEÓN Home';
-  $('#release-title').textContent = TITLES[state.phase];
+  $('.release').dataset.phase = state.phase;
+  swapText($('#release-title'), TITLES[state.phase], '');
   $('#release-version').textContent = 'Installed version: ' + state.version + (state.available ? ' · Available: ' + state.available.version : '');
   const notes = $('#release-notes');
   notes.replaceChildren();
@@ -75,6 +77,7 @@ async function refresh(): Promise<void> {
     $('#release-apply', HTMLButtonElement).disabled = true;
     $('#release-check', HTMLButtonElement).disabled = false;
     $('#release-status').textContent = 'Waiting for your Pi…';
+    $('.release').dataset.phase = 'checking';
     $('#release-message').textContent = 'The panel may be restarting. Keep Tailscale connected; we will check again.';
     return;
   } finally {
@@ -105,10 +108,11 @@ $('#release-check', HTMLButtonElement).addEventListener('click', () => {
   void act('/updates/check');
 });
 const dialog = $('#release-confirm', HTMLDialogElement);
-$('#release-apply', HTMLButtonElement).addEventListener('click', () => dialog.showModal());
-$('#release-confirm-no', HTMLButtonElement).addEventListener('click', () => dialog.close());
+bindDialog(dialog);
+$('#release-apply', HTMLButtonElement).addEventListener('click', () => openDialog(dialog));
+$('#release-confirm-no', HTMLButtonElement).addEventListener('click', () => closeDialog(dialog));
 $('#release-confirm-yes', HTMLButtonElement).addEventListener('click', () => {
-  dialog.close();
+  closeDialog(dialog);
   void act('/updates/apply');
 });
 document.addEventListener('visibilitychange', () => {

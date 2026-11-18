@@ -1,284 +1,211 @@
-import type { Connection, ControlContext, Device, Traffic } from './contracts.js';
-const CONNECTION_NAMES = { ethernet: 'Ethernet', wifi: 'Wi-Fi', other: 'Other', unknown: 'Unidentified' } satisfies Record<Connection, string>;
-interface Point {
-  x: number;
-  y: number;
+import type { ControlContext, Device } from './contracts.js';
+import { artKind, drawing } from './deviceArt.js';
+import { createInspector, type Presence, presenceOf } from './inspector.js';
+import { type Group, GROUP_NAMES, groupOf, GROUPS } from './mapLayout.js';
+import { $, date, icon, mbps, text } from './presentation.js';
+
+const STATUS = { online: 'Online', away: 'Not seen', unknown: 'Unknown' } satisfies Record<Presence, string>;
+const GROUP_ICONS = { wired: 'ethernet', fast: 'wifi', slow: 'wifi', wireless: 'wifi', unknown: 'unknown' } as const satisfies Record<Group, 'ethernet' | 'wifi' | 'unknown'>;
+
+export function matches(device: Device, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  return !needle || device.name.toLowerCase().includes(needle) || device.address.includes(needle);
 }
-interface Gesture {
-  pointer: number;
-  id: string | null;
-  start: Point;
-  origin: Point;
-  moved: boolean;
+function activeRate(device: Device, current: boolean): number {
+  const traffic = device.traffic;
+  return current && traffic ? (traffic.downloadRouterMbps ?? 0) + (traffic.uploadRouterMbps ?? 0) : 0;
 }
-import { drawChart } from './charts.js';
-import { createDeviceControls } from './deviceControls.js';
-import { $, date, icon, mbps, svgNS, text } from './presentation.js';
-import { bandName, signalText } from './wifi.js';
+function byName(left: Device, right: Device): number {
+  return left.name.localeCompare(right.name, 'en', { numeric: true });
+}
+
+// Topology: the router at the top, one branch per connection the router reports, devices as tiles.
+// CSS lays everything out, so nothing overlaps and the page scrolls normally on a phone.
+// Tiles are keyed by device and only moved when their branch or order changes, so the presence
+// ping keeps its rhythm across refreshes and focus stays on the same device.
 export function createMapView({ getState, scanCurrent, trafficCurrent, refresh, isRefreshing }: ControlContext & { scanCurrent: () => boolean }) {
-  const map = $('.map');
-  let selected: string | null = null;
-  const positions = new Map<string, Point>();
-  let scale = 1,
-    offset = { x: 24, y: 70 },
-    gesture: Gesture | null = null;
-  function compact() {
-    return map.clientWidth < 600;
+  const map = $('.map'),
+    hub = $('#hub'),
+    branches = $('#nodes'),
+    search = $('#device-search', HTMLInputElement);
+  const tiles = new Map<string, HTMLButtonElement>(),
+    branchElements = new Map<Group, HTMLElement>();
+  let selected: string | null = null,
+    rendered = false;
+
+  function tile(device: Device, index: number): HTMLButtonElement {
+    const existing = tiles.get(device.id);
+    if (existing) return existing;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.id = device.id;
+    // The ping is offset per device, so online devices never pulse in unison.
+    button.style.setProperty('--delay', `${(-((index * 0.7) % 2.8)).toFixed(2)}s`);
+    // First paint: transitions.dev stagger, 40 ms per tile and 300 ms in total at most.
+    button.style.setProperty('--stagger', `${rendered ? 0 : Math.min(index * 40, 300)}ms`);
+    button.classList.add('is-entering');
+    tiles.set(device.id, button);
+    return button;
   }
-  function hubPosition() {
-    return compact() ? { x: 20, y: 20 } : { x: 105, y: 80 };
-  }
-  function defaultPosition(index: number) {
-    return compact() ? { x: 20 + (index % 2) * 200, y: 170 + Math.floor(index / 2) * 118 } : { x: 420 + (index % 4) * 220, y: 20 + Math.floor(index / 4) * 124 };
-  }
-  function transform() {
-    $('.canvas').style.transform = `translate(${offset.x}px,${offset.y}px) scale(${scale})`;
-  }
-  // Same rule as the Mac app: colour = presence while discovery is current; width = log2 of current router rates, 1-5.
-  function linkColor(device: Device) {
-    return !scanCurrent() ? 'var(--warn)' : device.presence === 'seen' ? 'var(--good)' : device.presence === 'notSeen' ? 'var(--ash)' : 'var(--warn)';
-  }
-  function linkWidth(device: Device) {
-    const t = device.traffic;
-    if (!trafficCurrent() || !t) return 1;
-    const rates = [t.downloadRouterMbps, t.uploadRouterMbps].filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0);
-    return rates.length ? 1 + Math.min(4, Math.log2(1 + rates.reduce((a, b) => a + b, 0))) : 1;
-  }
-  function edge(position: Point, device: Device, isSelected: boolean) {
-    const line = document.createElementNS(svgNS, 'path'),
-      hub = hubPosition();
-    line.setAttribute(
-      'd',
-      compact()
-        ? `M${hub.x + 100} ${hub.y + 96} C${hub.x + 100} ${position.y - 30} ${position.x + 92} ${position.y - 40} ${position.x + 92} ${position.y}`
-        : `M${hub.x + 200} ${hub.y + 48} C${hub.x + 265} ${hub.y + 48} ${position.x - 65} ${position.y + 48} ${position.x} ${position.y + 48}`
-    );
-    const width = linkWidth(device) + (isSelected ? 0.6 : 0);
-    line.setAttribute('fill', 'none');
-    line.style.stroke = linkColor(device);
-    line.setAttribute('stroke-opacity', selected === null ? '.6' : isSelected ? '1' : '.15');
-    line.setAttribute('stroke-linecap', 'round');
-    line.setAttribute('stroke-width', width.toFixed(2));
-    line.setAttribute('stroke-dasharray', `2 ${(4 + width).toFixed(2)}`);
-    $('.canvas svg', SVGSVGElement).append(line);
-  }
-  function rateLine(traffic: Traffic | null) {
-    const line = document.createElement('small');
-    line.className = 'rates';
-    if (!trafficCurrent() || !traffic) {
-      line.textContent = 'No current traffic reading';
-      return line;
+  function paint(button: HTMLButtonElement, device: Device) {
+    const presence = presenceOf(device, scanCurrent()),
+      rate = activeRate(device, trafficCurrent()),
+      art = artKind(device),
+      entering = button.classList.contains('is-entering');
+    button.className = ['node', 'is-' + presence, device.id === selected ? 'selected' : '', device.paused ? 'is-paused' : '', entering ? 'is-entering' : ''].filter(Boolean).join(' ');
+    button.hidden = !matches(device, search.value);
+    button.setAttribute('aria-pressed', String(device.id === selected));
+    if (button.dataset.art !== art) {
+      button.dataset.art = art;
+      const glyph = document.createElement('span'),
+        body = document.createElement('span');
+      glyph.className = 'glyph';
+      glyph.append(drawing(art));
+      body.className = 'body';
+      body.append(text('b', '', 'name'), text('small', '', 'meta'));
+      button.replaceChildren(glyph, body, text('em', '', 'badge'));
     }
-    line.append(text('b', '↓ ' + mbps(traffic.downloadRouterMbps), 'd'), text('b', '↑ ' + mbps(traffic.uploadRouterMbps) + ' Mbps', 'u'));
-    return line;
+    const [, body, badge] = button.children,
+      name = body?.firstElementChild,
+      meta = body?.lastElementChild,
+      flowing = rate >= 0.05 && device.traffic !== null;
+    if (name) name.textContent = device.name;
+    if (meta instanceof HTMLElement) {
+      meta.replaceChildren();
+      meta.classList.toggle('is-flowing', flowing);
+      if (flowing) {
+        const dots = document.createElement('span');
+        dots.className = 'activity';
+        dots.setAttribute('aria-hidden', 'true');
+        dots.append(document.createElement('i'), document.createElement('i'), document.createElement('i'));
+        meta.append(dots, '↓ ' + mbps(device.traffic?.downloadRouterMbps) + ' Mbps');
+      } else meta.append(STATUS[presence]);
+    }
+    if (badge instanceof HTMLElement) {
+      badge.textContent = device.isNew ? 'New' : device.paused ? 'Paused' : '';
+      badge.className = 'badge' + (device.isNew ? ' new' : '');
+      badge.hidden = !device.isNew && !device.paused;
+    }
+    button.setAttribute(
+      'aria-label',
+      [device.name, STATUS[presence].toLowerCase(), device.paused ? 'paused' : '', device.isNew ? 'new device' : '', flowing ? `${mbps(device.traffic?.downloadRouterMbps)} Mbps down` : '']
+        .filter(Boolean)
+        .join(', ')
+    );
+  }
+  function branch(group: Group): HTMLElement {
+    const existing = branchElements.get(group);
+    if (existing) return existing;
+    const element = document.createElement('section'),
+      head = document.createElement('h3'),
+      list = document.createElement('div');
+    element.className = 'branch';
+    element.dataset.group = group;
+    head.className = 'branch-head';
+    head.append(icon(GROUP_ICONS[group], 'conn'), text('span', GROUP_NAMES[group], 'name'), text('span', '', 'count'));
+    list.className = 'tiles';
+    element.append(head, list);
+    branchElements.set(group, element);
+    return element;
+  }
+  function renderHub(devices: ReadonlyArray<Device>, router: Device | undefined) {
+    const online = devices.filter(device => device.presence === 'seen').length,
+      total = devices.reduce((sum, device) => sum + (device.traffic?.downloadRouterMbps ?? 0), 0);
+    const summary = !devices.length
+      ? 'No devices observed yet'
+      : [scanCurrent() ? `${online} of ${devices.length} online` : `${devices.length} known`, trafficCurrent() ? `↓ ${mbps(total)} Mbps now` : 'No current traffic reading'].join(' · ');
+    const mark = text('span', '', 'mark'),
+      body = document.createElement('span');
+    body.className = 'body';
+    body.append(text('b', router ? router.name : 'Home network', 'name'), text('small', summary, 'meta'));
+    hub.replaceChildren();
+    if (!router) {
+      hub.append(mark, body);
+      return;
+    }
+    // The router is a device too: selecting it opens the inspector like any other tile.
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'node den' + (router.id === selected ? ' selected' : '');
+    button.dataset.id = router.id;
+    button.setAttribute('aria-pressed', String(router.id === selected));
+    button.setAttribute('aria-label', `${router.name}, router, ${summary}`);
+    button.append(mark, body);
+    hub.append(button);
   }
   function renderMap() {
     const state = getState();
     if (!state) return;
-    const nodes = $('#nodes'),
-      active = document.activeElement,
-      focused = active instanceof HTMLElement ? active.dataset.id : undefined;
-    nodes.replaceChildren();
-    $('.canvas svg', SVGSVGElement).replaceChildren();
-    const hub = document.createElement('div');
-    hub.className = 'node hub';
-    const hubAt = hubPosition();
-    hub.style.left = hubAt.x + 'px';
-    hub.style.top = hubAt.y + 'px';
-    const hubTitle = document.createElement('strong');
-    hubTitle.append(text('span', 'Local network'));
-    hub.append(hubTitle, text('small', state.devices.length + ' devices in inventory'));
-    nodes.append(hub);
-    state.devices.forEach((device, index) => {
-      if (!positions.has(device.id)) positions.set(device.id, defaultPosition(index));
-      // Phones stack cards in tight columns, so a curve would run underneath them: there the card's
-      // left stripe carries the same colour (presence) and thickness (traffic) as the link line.
-      const position = positions.get(device.id) ?? defaultPosition(index);
-      if (!compact()) edge(position, device, selected === device.id);
-      const node = document.createElement('button');
-      node.type = 'button';
-      node.className = 'node' + (selected === device.id ? ' selected' : '');
-      node.style.setProperty('--stripe', Math.round(2 + linkWidth(device) * 1.5) + 'px');
-      node.style.setProperty('--stripe-color', linkColor(device));
-      node.dataset.id = device.id;
-      node.setAttribute('aria-pressed', String(selected === device.id));
-      node.style.left = position.x + 'px';
-      node.style.top = position.y + 'px';
-      const title = document.createElement('strong');
-      title.append(icon(device.traffic?.connection), text('span', device.name));
-      if (device.isNew) title.append(text('em', 'New', 'badge-new'));
-      if (device.paused) title.append(text('em', 'Paused', 'badge-paused'));
-      const seen = scanCurrent() && device.presence === 'seen',
-        presence = document.createElement('small'),
-        dot = document.createElement('i');
-      const known = scanCurrent() && (seen || device.presence === 'notSeen');
-      dot.className = 'dot ' + (!known ? 'hollow' : seen ? 'ok' : '');
-      presence.append(dot, !scanCurrent() ? 'No current reading' : !known ? 'Unknown' : seen ? 'Seen' : 'Not seen');
-      node.append(title, text('small', device.address), presence, rateLine(device.traffic));
-      nodes.append(node);
-    });
+    const router = state.devices.find(device => device.role === 'router'),
+      focusedID = document.activeElement instanceof HTMLElement && map.contains(document.activeElement) ? document.activeElement.dataset.id : undefined,
+      query = search.value.trim();
+    renderHub(state.devices, router);
+    const live = new Set(state.devices.map(device => device.id));
+    for (const [id, element] of tiles)
+      if (!live.has(id) || id === router?.id) {
+        element.remove();
+        tiles.delete(id);
+      }
+    const members = new Map<Group, Array<Device>>();
+    for (const device of state.devices) {
+      if (device.id === router?.id) continue;
+      const group = groupOf(device);
+      members.set(group, [...(members.get(group) ?? []), device]);
+    }
+    let order = 0,
+      previous: HTMLElement | null = null,
+      visible = 0;
+    for (const group of GROUPS) {
+      const devices = (members.get(group) ?? []).sort(byName),
+        element = branch(group),
+        list = element.lastElementChild;
+      if (!devices.length || !(list instanceof HTMLElement)) {
+        element.remove();
+        continue;
+      }
+      // Keep branch order without re-inserting branches that are already in place.
+      if (element.parentElement !== branches || element.previousElementSibling !== previous) {
+        if (previous) previous.after(element);
+        else branches.prepend(element);
+      }
+      previous = element;
+      devices.forEach((device, position) => {
+        const button = tile(device, order++);
+        if (list.children[position] !== button) list.insertBefore(button, list.children[position] ?? null);
+        paint(button, device);
+      });
+      const shown = devices.filter(device => matches(device, query)).length;
+      visible += shown;
+      element.hidden = shown === 0;
+      const count = element.querySelector('.count');
+      if (count) count.textContent = shown === devices.length ? String(devices.length) : `${shown} of ${devices.length}`;
+    }
+    map.classList.toggle('has-selection', selected !== null);
     const empty = $('.empty');
-    empty.hidden = state.devices.length > 0;
-    empty.textContent = 'No devices have been observed yet. Check the inventory service.';
-    $('.status').textContent = `${scanCurrent() ? 'Latest scan' : 'No current scan reading'} · ${date(getState()?.observedAt)}${getState()?.truncated ? ' · limited to 64 devices' : ''}`;
-    transform();
-    inspect();
-    if (focused) [...nodes.querySelectorAll('button')].find(node => node.dataset.id === focused)?.focus({ preventScroll: true });
+    empty.hidden = visible > 0 || (!query && state.devices.length > 0);
+    empty.textContent = query ? `No device matches “${query}”.` : 'No devices have been observed yet. Check the inventory service.';
+    // The header already shows the scan time; this line only speaks when something is off.
+    const status = $('.status'),
+      notes = [scanCurrent() ? '' : `Earlier scan from ${date(state.observedAt)}`, state.truncated ? 'Showing the first 64 devices' : ''].filter(Boolean);
+    status.textContent = notes.join('. ');
+    status.hidden = notes.length === 0;
+    rendered = true;
+    if (focusedID) map.querySelector<HTMLElement>(`button[data-id="${CSS.escape(focusedID)}"]`)?.focus({ preventScroll: true });
+    inspector.inspect();
   }
-  function inspect() {
-    const device = getState()?.devices.find(item => item.id === selected),
-      details = $('#details');
-    details.replaceChildren();
-    $('#inspector').classList.toggle('open', Boolean(device));
-    $('#title').textContent = device ? device.name : 'Home devices';
-    $('#description').textContent = device ? 'Latest observation from LEÓN Home.' : 'Select a device for details. Drag to arrange the map.';
-    const chart = $('#device-chart', SVGSVGElement);
-    chart.toggleAttribute('hidden', !device);
-    controls.renderRename(device);
-    controls.renderPause(device);
-    controls.renderSchedule(device);
-    if (!device) return;
-    const presence = !scanCurrent() ? 'Unknown' : device.presence === 'seen' ? 'Seen in the scan' : device.presence === 'notSeen' ? 'Not seen in the scan' : 'Unknown';
-    const current = trafficCurrent(),
-      traffic = device.traffic;
-    for (const [label, value] of [
-      ['Address', device.address],
-      ['Presence', presence],
-      ['Last seen', date(device.lastSeen)],
-      ['Tipo', device.role || device.kind || 'Unidentified'],
-      ['Connection (router)', traffic ? CONNECTION_NAMES[traffic.connection] : 'Unidentified'],
-      ['Ethernet port', 'No verified association'],
-      ['Download', current && traffic ? mbps(traffic.downloadRouterMbps) + ' Mbps' : 'No current reading'],
-      ['Upload', current && traffic ? mbps(traffic.uploadRouterMbps) + ' Mbps' : 'No current reading'],
-      ...(current && traffic?.band
-        ? [
-            ['Wi-Fi band', bandName(traffic.band)],
-            ['Signal', signalText(traffic.signalDbm)],
-          ]
-        : []),
-      ...(device.isNew ? [['New device', 'First seen in the last 24 hours']] : []),
-    ])
-      details.append(text('dt', label), text('dd', value));
-    drawChart(
-      chart,
-      (traffic?.history || []).map(pair => [pair[0], pair[1]])
-    );
-  }
-  // The form is static markup: refreshes update it only when the selection changes and it is not being edited.
-  function fit() {
-    const map = $('.map');
-    if (!map.clientWidth) return;
-    const points = [...positions.values()];
-    const width = Math.max(compact() ? 400 : 760, ...points.map(point => point.x + 205)),
-      height = Math.max(280, ...points.map(point => point.y + 120));
-    // Phones fit the width and scroll vertically by panning; wide screens fit everything.
-    scale = Math.max(0.18, Math.min(1, (map.clientWidth - 24) / width, compact() ? 1 : (map.clientHeight - 80) / height));
-    offset = { x: 12, y: 56 };
-    transform();
-  }
-  function zoom(factor: number) {
-    const map = $('.map'),
-      next = Math.min(2, Math.max(0.18, scale * factor)),
-      center = { x: map.clientWidth / 2, y: map.clientHeight / 2 };
-    offset = { x: center.x - ((center.x - offset.x) * next) / scale, y: center.y - ((center.y - offset.y) * next) / scale };
-    scale = next;
-    transform();
-  }
+  branches.addEventListener('animationend', event => {
+    if (event.target instanceof HTMLElement && event.animationName === 'tile-enter') event.target.classList.remove('is-entering');
+  });
+  map.addEventListener('click', event => {
+    const node = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('button.node') : null;
+    if (node?.dataset.id) select(node.dataset.id);
+  });
+  search.addEventListener('input', renderMap);
+
   function select(id: string | null) {
     selected = id;
-    inspect();
-    for (const item of document.querySelectorAll<HTMLButtonElement>('button.node')) {
-      item.classList.toggle('selected', item.dataset.id === id);
-      item.setAttribute('aria-pressed', String(item.dataset.id === id));
-    }
+    renderMap();
   }
-  map.addEventListener('pointerdown', event => {
-    if (!(event.target instanceof Element) || event.target.closest('.controls') || gesture) return;
-    if (!(event.target instanceof Element)) return;
-    const node = event.target.closest<HTMLButtonElement>('button.node');
-    const id = node?.dataset.id ?? null;
-    if (id) select(id);
-    gesture = { pointer: event.pointerId, id, start: { x: event.clientX, y: event.clientY }, origin: id ? { ...(positions.get(id) ?? defaultPosition(0)) } : { ...offset }, moved: false };
-    map.setPointerCapture(event.pointerId);
-  });
-  map.addEventListener('pointermove', event => {
-    if (!gesture || gesture.pointer !== event.pointerId) return;
-    const dx = event.clientX - gesture.start.x,
-      dy = event.clientY - gesture.start.y;
-    if (Math.abs(dx) + Math.abs(dy) > 4) gesture.moved = true;
-    if (gesture.id) {
-      positions.set(gesture.id, { x: Math.max(0, Math.min(1750, gesture.origin.x + dx / scale)), y: Math.max(0, Math.min(2050, gesture.origin.y + dy / scale)) });
-      renderMap();
-    } else {
-      offset = { x: gesture.origin.x + dx, y: gesture.origin.y + dy };
-      transform();
-    }
-  });
-  function endGesture(event: PointerEvent) {
-    if (gesture?.pointer !== event.pointerId) return;
-    if (!gesture.id && !gesture.moved) select(null);
-    gesture = null;
-    if (map.hasPointerCapture(event.pointerId)) map.releasePointerCapture(event.pointerId);
-  }
-  map.addEventListener('pointerup', endGesture);
-  map.addEventListener('pointercancel', endGesture);
-  map.addEventListener('keydown', event => {
-    if (!(event.target instanceof Element)) return;
-    const node = event.target.closest<HTMLButtonElement>('button.node');
-    if (node && (event.key === 'Enter' || event.key === ' ')) {
-      event.preventDefault();
-      if (node.dataset.id) select(node.dataset.id);
-    }
-  });
-  map.addEventListener(
-    'wheel',
-    event => {
-      event.preventDefault();
-      zoom(event.deltaY > 0 ? 0.92 : 1.08);
-    },
-    { passive: false }
-  );
-  $('#in').onclick = () => zoom(1.2);
-  $('#out').onclick = () => zoom(1 / 1.2);
-  $('#fit').onclick = fit;
-  $('#close-sheet').onclick = () => select(null);
-  // Sheet: drag down from the handle or title to close; tap outside or Esc closes. Taps on the map are
-  // handled by its own gesture (a tap on a device switches selection), and the confirm dialog stays inside.
-  {
-    const sheet = $('#inspector'),
-      phone = matchMedia('(max-width:760px)');
-    let drag: { pointer: number; start: number; dy: number } | null = null; // wide screens: a fixed side panel
-    sheet.addEventListener('pointerdown', event => {
-      if (!(event.target instanceof Element) || !phone.matches || !event.target.closest('.grab,h2,#description') || !sheet.classList.contains('open')) return;
-      drag = { pointer: event.pointerId, start: event.clientY, dy: 0 };
-      sheet.classList.add('dragging');
-      sheet.setPointerCapture(event.pointerId);
-    });
-    sheet.addEventListener('pointermove', event => {
-      if (!drag || drag.pointer !== event.pointerId) return;
-      drag.dy = Math.max(0, event.clientY - drag.start);
-      sheet.style.transform = `translateY(${drag.dy}px)`;
-    });
-    const endDrag = (event: PointerEvent) => {
-      if (!drag || drag.pointer !== event.pointerId) return;
-      const close = drag.dy > 70;
-      drag = null;
-      sheet.classList.remove('dragging');
-      sheet.style.transform = '';
-      if (close) select(null);
-    };
-    sheet.addEventListener('pointerup', endDrag);
-    sheet.addEventListener('pointercancel', endDrag);
-    document.addEventListener('click', event => {
-      if (!phone.matches || !selected || !sheet.classList.contains('open') || (event.target instanceof Node && sheet.contains(event.target))) return;
-      if (event.target instanceof Element && event.target.closest('.map,dialog')) return;
-      select(null);
-    });
-    document.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && selected && !$('#confirm', HTMLDialogElement).open) select(null);
-    });
-  }
-
-  const controls = createDeviceControls({ getState, getSelectedID: () => selected, onInspect: inspect, refresh, isRefreshing });
-  return { render: renderMap, fit, transform, select, isGesturing: () => Boolean(gesture) };
+  const inspector = createInspector({ getState, scanCurrent, trafficCurrent, refresh, isRefreshing, getSelectedID: () => selected, close: () => select(null) });
+  return { render: renderMap, select };
 }

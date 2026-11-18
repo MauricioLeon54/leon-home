@@ -18,13 +18,13 @@
       <header>
         <img src="/brand/symbol.png" alt="" />
         <h1 id="heading">Network</h1>
-        <div class="chips">
+        <div class="chips" aria-label="Reading status">
           <span class="chip" id="scan-chip"><i class="dot"></i>Loading…</span>
           <span class="chip" id="router-chip"><i class="dot"></i>Router</span>
         </div>
       </header>
-      <section class="card banner" id="locked" hidden>
-        <h3>Router traffic is paused</h3>
+      <section class="notice" id="locked" hidden>
+        <h2>Router readings are locked</h2>
         <p id="locked-text"></p>
         <form id="unlock-form" class="unlock" autocomplete="on">
           <input
@@ -56,23 +56,33 @@
       </section>
 
       <section class="view" id="view-map" aria-label="Map">
+        <div class="map-toolbar">
+          <input
+            type="search"
+            id="device-search"
+            placeholder="Find a device"
+            aria-label="Find a device"
+            autocomplete="off"
+            enterkeyhint="search"
+          />
+          <ul class="map-legend" aria-label="Legend">
+            <li><i class="key online"></i>Online</li>
+            <li><i class="key away"></i>Not seen</li>
+            <li><i class="key unknown"></i>Unknown</li>
+          </ul>
+        </div>
         <div class="workspace">
           <div class="map" aria-label="Interactive device map">
-            <div class="status" role="status">Loading readings…</div>
-            <div class="canvas">
-              <svg aria-hidden="true"></svg>
-              <div id="nodes"></div>
-            </div>
-            <div class="empty" hidden></div>
-            <div class="controls">
-              <button id="out" aria-label="Zoom out">−</button><button id="in" aria-label="Zoom in">+</button
-              ><button id="fit">Fit</button>
-            </div>
+            <p class="status" role="status" hidden>Loading readings…</p>
+            <div class="hub" id="hub"></div>
+            <div class="branches" id="nodes"></div>
+            <p class="empty" hidden></p>
           </div>
-          <aside class="card inspector sheet" id="inspector">
+          <aside class="inspector sheet" id="inspector" aria-labelledby="title">
             <button class="grab" id="close-sheet" aria-label="Close details"></button>
+            <div class="inspector-art" id="inspector-art" aria-hidden="true" hidden></div>
             <h2 id="title">Home devices</h2>
-            <p class="muted small" id="description">Select a device for details. Drag to arrange the map.</p>
+            <p class="muted small" id="description">Select a device for details.</p>
             <form id="rename" class="unlock" hidden>
               <input
                 type="text"
@@ -82,7 +92,7 @@
                 enterkeyhint="done"
                 placeholder="Device name"
                 aria-label="Device name"
-              /><button type="submit" class="primary" id="rename-submit">Save</button>
+              /><button type="submit" id="rename-submit">Rename</button>
             </form>
             <p class="small muted" id="rename-status" role="status"></p>
             <ul class="switches pause" id="pause-row" hidden>
@@ -126,36 +136,36 @@
               hidden
               aria-hidden="true"
             ></svg>
-            <p class="note">
-              Lines group discovered inventory; they do not show physical cables or traffic routes. The router reports
-              connection types. Green means seen, gray means not seen and amber means unknown. Width represents current
-              router-reported traffic, not link speed. On phones, the left edge of each card shows the same information.
-            </p>
+            <section class="t-acc nested" id="map-legend" data-open="false">
+              <button type="button" class="t-acc-head quiet" aria-expanded="false" aria-controls="map-legend-panel">
+                <span class="title">How to read the map</span
+                ><span class="t-acc-chevron" aria-hidden="true"
+                  ><svg viewBox="0 0 16 16"><path d="M4 6.5 8 10.5 12 6.5" /></svg
+                ></span>
+              </button>
+              <div class="t-acc-panel" id="map-legend-panel" inert>
+                <div class="t-acc-panel-inner">
+                  <div class="t-acc-body">
+                    <p class="note">
+                      Branches group devices by the connection the router reports. A green dot means the device was seen
+                      in the latest scan, a grey dot that it was not, and a ring that its presence is unknown. Moving
+                      dots next to a rate mean the router reports traffic right now. Branches do not show physical
+                      cables. Drawings follow the device type set for each device, never its name.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
           </aside>
         </div>
       </section>
 
       <section class="view" id="view-traffic" aria-label="Traffic">
-        <section class="card">
-          <h3>Internet <span class="count" id="net-at"></span></h3>
-          <div class="detail" id="net-tiles"></div>
-          <svg
-            class="chart"
-            id="net-chart"
-            viewBox="0 0 300 120"
-            preserveAspectRatio="none"
-            aria-label="Internet latency over 24 hours"
-          ></svg>
-          <ul class="wifi-list" id="outages"></ul>
-          <p class="note">
-            Every 30 seconds, the Pi measures router ping, Internet TCP connectivity to 1.1.1.1 and 9.9.9.9 without
-            application data, and router DNS. Two or more consecutive failures count as an outage. If the router
-            responds, the likely cause is the provider or modem; otherwise, the home network. Gaps without measurements
-            do not count as outages.
-          </p>
-        </section>
-        <section class="card">
-          <h3>Now <span class="count" id="traffic-at"></span></h3>
+        <section class="section first">
+          <div class="section-head">
+            <h2>Right now</h2>
+            <span class="meta" id="traffic-at"></span>
+          </div>
           <div class="totals">
             <div class="total">
               <span><i class="sw d"></i>Download</span><b id="total-down">—</b>
@@ -172,36 +182,90 @@
             aria-label="Traffic over the last few minutes"
           ></svg>
           <div class="axis"><span id="axis-start"></span><span>now</span></div>
-          <p class="note">
-            Sum of the rates reported by the router for active devices. This is not a speed test or a measurement of
-            link capacity.
-          </p>
+          <p class="note">Sum of the rates the router reports for active devices. This is not a speed test.</p>
         </section>
-        <section class="card devices">
-          <h3>By device <span class="count" id="device-count"></span></h3>
+        <section class="section devices">
+          <div class="section-head">
+            <h2>By device</h2>
+            <span class="meta" id="device-count"></span>
+          </div>
           <ul id="device-list"></ul>
+        </section>
+        <section class="section">
+          <div class="section-head">
+            <h2>Internet</h2>
+            <span class="meta" id="net-at"></span>
+          </div>
+          <div class="readings" id="net-tiles"></div>
+          <svg
+            class="chart latency"
+            id="net-chart"
+            viewBox="0 0 300 120"
+            preserveAspectRatio="none"
+            aria-label="Internet latency over 24 hours"
+          ></svg>
+          <div class="axis"><span>24 h ago</span><span>now</span></div>
+          <h3 class="subhead">Outages</h3>
+          <ul class="outages" id="outages"></ul>
+          <section class="t-acc nested" id="internet-method" data-open="false">
+            <button type="button" class="t-acc-head quiet" aria-expanded="false" aria-controls="internet-method-panel">
+              <span class="title">How outages are measured</span
+              ><span class="t-acc-chevron" aria-hidden="true"
+                ><svg viewBox="0 0 16 16"><path d="M4 6.5 8 10.5 12 6.5" /></svg
+              ></span>
+            </button>
+            <div class="t-acc-panel" id="internet-method-panel" inert>
+              <div class="t-acc-panel-inner">
+                <div class="t-acc-body">
+                  <p class="note">
+                    Every 30 seconds, the Pi measures router ping, Internet TCP connectivity to 1.1.1.1 and 9.9.9.9
+                    without application data, and router DNS. Two or more consecutive failures count as an outage. If
+                    the router responds, the likely cause is the provider or modem; otherwise, the home network. Gaps
+                    without measurements do not count as outages.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
         </section>
       </section>
 
       <section class="view" id="view-ports" aria-label="Ports">
-        <section class="card">
-          <h3>Router · Ethernet ports <span class="count" id="ports-at"></span></h3>
+        <section class="section first">
+          <div class="section-head">
+            <h2>Ethernet ports</h2>
+            <span class="meta" id="ports-at"></span>
+          </div>
           <div class="panel" id="panel" role="listbox" aria-label="Router ports"></div>
           <div id="port-detail"><p class="muted small">Select a port.</p></div>
+          <section class="t-acc nested" id="ports-method" data-open="false">
+            <button type="button" class="t-acc-head quiet" aria-expanded="false" aria-controls="ports-method-panel">
+              <span class="title">How port control works</span
+              ><span class="t-acc-chevron" aria-hidden="true"
+                ><svg viewBox="0 0 16 16"><path d="M4 6.5 8 10.5 12 6.5" /></svg
+              ></span>
+            </button>
+            <div class="t-acc-panel" id="ports-method-panel" inert>
+              <div class="t-acc-panel-inner">
+                <div class="t-acc-body">
+                  <p class="note">
+                    Disabling a port disconnects its Ethernet link without cutting power to the connected device. Only
+                    ports authorized on the Pi (<code>/etc/leon-router/controllable-ports</code>) can be disabled. The
+                    WAN port and other ports stay protected to preserve access. Enabling a port is always allowed. LEÓN
+                    verifies the result with a fresh router reading and never retries an action automatically.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
         </section>
-        <section class="card">
-          <h3>Wi-Fi <span class="count" id="wifi-at"></span></h3>
+        <section class="section">
+          <div class="section-head">
+            <h2>Wi-Fi</h2>
+            <span class="meta" id="wifi-at"></span>
+          </div>
           <div id="wifi"></div>
           <p class="note">Band and signal strength reported by the router at the access point. Weak: below −70 dBm.</p>
-        </section>
-        <section class="card">
-          <h3>How it works</h3>
-          <p class="muted small">
-            Disabling a port disconnects its Ethernet link without cutting power to the connected device. Only ports
-            authorized on the Pi (<code>/etc/leon-router/controllable-ports</code>) can be disabled. The WAN port and
-            other ports stay protected to preserve access. Enabling a port is always allowed. LEÓN verifies the result
-            with a fresh router reading and never retries an action automatically.
-          </p>
         </section>
       </section>
     </main>
@@ -228,7 +292,7 @@
       >
     </nav>
 
-    <dialog id="confirm">
+    <dialog id="confirm" aria-labelledby="confirm-title">
       <h2 id="confirm-title"></h2>
       <p id="confirm-text"></p>
       <div class="buttons">

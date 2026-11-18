@@ -1,24 +1,31 @@
 <main class="updates">
-  <a class="back" href="/">Back to home</a>
-  <img class="release-mark" src="/brand/symbol.png" alt="LEÓN Home" />
-  <h1>Your network, up to date.</h1>
-  <p class="intro">New improvements arrive here. You choose when to install them.</p>
-  <section class="release" aria-labelledby="release-title">
+  <a class="back" href="/"><span aria-hidden="true">‹</span> Back to home</a>
+  <header class="release-head">
+    <img class="release-mark" src="/brand/symbol.png" alt="" />
+    <h1>Updates</h1>
+  </header>
+  <p class="intro">
+    You choose when LEÓN Home installs an update. Releases are signed, and one that fails verification is never
+    installed.
+  </p>
+  <section class="release" aria-labelledby="release-title" data-phase="checking">
     <p id="release-status" role="status" aria-live="polite">Checking your Pi…</p>
     <h2 id="release-title">Updates</h2>
     <p id="release-version"></p>
     <ul id="release-notes"></ul>
     <p id="release-message">Pi-hole keeps running while the panel updates.</p>
     <div class="release-actions">
-      <button id="release-apply" hidden>Accept and install</button><button id="release-check">Check for updates</button>
+      <button id="release-apply" class="primary" hidden>Accept and install</button
+      ><button id="release-check">Check for updates</button>
     </div>
   </section>
   <p class="small muted">This page updates LEÓN Home. System and Pi-hole updates are maintained separately.</p>
-  <dialog id="release-confirm">
-    <h2>Install this update?</h2>
-    <p>The panel will restart briefly. We keep the previous version for recovery if a check fails.</p>
-    <div class="release-actions">
-      <button id="release-confirm-yes">Install now</button><button id="release-confirm-no">Later</button>
+  <dialog id="release-confirm" aria-labelledby="release-confirm-title">
+    <h2 id="release-confirm-title">Install this update?</h2>
+    <p>The panel restarts briefly. The previous version is kept and restored automatically if a check fails.</p>
+    <div class="buttons">
+      <button id="release-confirm-no">Later</button
+      ><button id="release-confirm-yes" class="primary">Install now</button>
     </div>
   </dialog>
 </main>

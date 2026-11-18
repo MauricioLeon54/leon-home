@@ -1,0 +1,45 @@
+@use 'tokens' as *;
+
+@mixin phone {
+  @media (max-width: $phone-max) {
+    @content;
+  }
+}
+@mixin narrow {
+  @media (max-width: $narrow-max) {
+    @content;
+  }
+}
+@mixin wide {
+  @media (min-width: $wide-min) {
+    @content;
+  }
+}
+@mixin desktop {
+  @media (min-width: $desktop-min) {
+    @content;
+  }
+}
+// Every recipe carries its own guard, as transitions.dev requires.
+@mixin reduced-motion {
+  @media (prefers-reduced-motion: reduce) {
+    @content;
+  }
+}
+@mixin hover {
+  @media (hover: hover) {
+    @content;
+  }
+}
+@mixin ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@mixin numeric {
+  font-family: var(--numeric);
+  font-variant-numeric: tabular-nums;
+}
+@mixin hairline($side: top) {
+  border-#{$side}: 1px solid color('line');
+}

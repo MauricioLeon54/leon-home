@@ -4,6 +4,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { build, transform } from 'esbuild';
+import { compile } from 'sass';
 
 const root = new URL('../', import.meta.url);
 const web = new URL('deploy/leon-home/files/usr/local/lib/leon-overview/web/', root);
@@ -40,12 +41,14 @@ try {
     minify: true,
     logLevel: 'error',
   });
+  // Styles are written in Sass (web/styles); each entry compiles to the served stylesheet of the same name.
   const stylesheetSizes = {};
-  for (const name of ['network-map.css', 'home.css', 'updates.css']) {
-    const source = await readFile(new URL(name, web), 'utf8');
-    const result = await transform(source, { loader: 'css', minify: true, target: ['safari16.4', 'chrome110'], legalComments: 'none' });
-    await writeFile(join(stage, name), result.code);
-    stylesheetSizes[name] = { sourceBytes: Buffer.byteLength(source), builtBytes: Buffer.byteLength(result.code) };
+  for (const name of ['network-map', 'home', 'updates']) {
+    const entry = fileURLToPath(new URL(`styles/${name}.scss`, web));
+    const compiled = compile(entry, { style: 'expanded', sourceMap: false });
+    const result = await transform(compiled.css, { loader: 'css', minify: true, target: ['safari16.4', 'chrome110'], legalComments: 'none' });
+    await writeFile(join(stage, name + '.css'), result.code);
+    stylesheetSizes[name + '.css'] = { compiledBytes: Buffer.byteLength(compiled.css), builtBytes: Buffer.byteLength(result.code) };
   }
   let unbundledJavaScriptBytes = 0;
   for (const input of Object.keys(result.metafile.inputs)) {

@@ -37,10 +37,17 @@ export function icon(kind: Connection | undefined, className?: string): SVGSVGEl
   return svg;
 }
 export function date(value: number | null | undefined): string {
-  return typeof value === 'number' ? new Date(value * 1000).toLocaleString('en') : 'No observation';
+  if (typeof value !== 'number') return 'No observation';
+  const moment = new Date(value * 1000),
+    today = new Date();
+  const clock = moment.toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' });
+  if (moment.toDateString() === today.toDateString()) return 'Today ' + clock;
+  today.setDate(today.getDate() - 1);
+  if (moment.toDateString() === today.toDateString()) return 'Yesterday ' + clock;
+  return moment.toLocaleDateString('en', { month: 'short', day: 'numeric' }) + ', ' + clock;
 }
 export function time(value: number | null | undefined): string {
-  return typeof value === 'number' ? new Date(value * 1000).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' }) : '—';
+  return typeof value === 'number' ? new Date(value * 1000).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' }) : '—';
 }
 export function mbps(value: number | null | undefined): string {
   return typeof value === 'number' ? value.toLocaleString('en', { maximumFractionDigits: value < 10 ? 2 : 1 }) : '—';

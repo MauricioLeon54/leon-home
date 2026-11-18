@@ -1,0 +1,344 @@
+// Device inspector: side panel on wide screens, transitions.dev panel-reveal sheet on phones.
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+// Inspector: side panel on wide screens, bottom sheet on phones
+.inspector {
+  background: color('surface');
+  border: 1px solid color('line');
+  border-radius: var(--radius-l);
+  padding: 18px;
+  min-width: 0;
+}
+.inspector h2 {
+  font-size: var(--text-xl);
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+.inspector #description {
+  margin-top: 4px;
+}
+.inspector dl {
+  margin: 16px 0 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  font-size: var(--text-s);
+}
+.inspector dt,
+.inspector dd {
+  padding: 9px 0;
+  border-top: 1px solid color('line');
+}
+.inspector dt {
+  color: color('ash');
+  padding-right: 14px;
+}
+.inspector dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.inspector dd.unknown {
+  color: color('ash');
+}
+.inspector .t-acc.nested {
+  margin-top: 14px;
+  border-top: 1px solid color('line');
+}
+.sheet .grab {
+  display: none;
+}
+#rename-status,
+#sched-status {
+  margin-top: 8px;
+}
+#rename-status:empty,
+#sched-status:empty {
+  display: none;
+}
+
+// Switch rows: access, schedule, ports
+.switches {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.switches li,
+.schedule {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid color('line');
+  border-radius: var(--radius-m);
+  background: color('bg');
+  transition: border-color var(--duration-quick) var(--ease-smooth-out);
+}
+.switches li.selected {
+  border-color: color('line-strong');
+}
+.switches .info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+.switches .info b,
+.sched-head b {
+  font-size: var(--text-m);
+  font-weight: 600;
+}
+.switches .info small,
+.sched-head small {
+  font-size: var(--text-s);
+  color: color('ash');
+}
+.switches .info small.good,
+.sched-head small.good {
+  color: color('good');
+}
+.switches .info small.warn {
+  color: color('warn');
+}
+.switches.pause {
+  margin-top: 16px;
+}
+.schedule {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+.sched-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sched-head .info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sched-editor {
+  display: grid;
+  gap: 12px;
+}
+button.link {
+  justify-self: start;
+  min-height: 36px;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: color('bone');
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-size: var(--text-s);
+}
+.days {
+  display: flex;
+  gap: 4px;
+  justify-content: space-between;
+}
+.days button {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: var(--text-s);
+}
+.days button[aria-pressed='true'] {
+  background: color('bone');
+  color: color('ink');
+  border-color: color('bone');
+}
+.times {
+  display: flex;
+  gap: 10px;
+}
+.times label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: color('ash');
+  flex: 1 1 0;
+  min-width: 0;
+}
+.times input {
+  color-scheme: dark;
+  width: 100%;
+}
+.switch {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  margin: 0;
+  width: 51px;
+  height: 31px;
+  border-radius: 999px;
+  background: color('off');
+  position: relative;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-smooth-out);
+}
+.switch:before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: color('bone');
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform var(--duration-fast) var(--ease-smooth-out);
+}
+.switch:checked {
+  background: color('good');
+}
+.switch:checked:before {
+  transform: translateX(20px);
+}
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+// Pending: shows the requested position and breathes until the router re-read settles it
+.switch[aria-busy='true'] {
+  opacity: 1;
+  animation: pending var(--duration-very-slow) var(--ease-in-out) infinite alternate;
+}
+@keyframes pending {
+  to {
+    opacity: 0.45;
+  }
+}
+@include reduced-motion {
+  .switch,
+  .switch:before {
+    transition: none;
+  }
+  .switch[aria-busy='true'] {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+@include phone {
+  // Bottom sheet: transitions.dev panel reveal (open 400 ms, close 350 ms, 2 px cross-blur)
+  .sheet {
+    position: fixed;
+    left: max(8px, env(safe-area-inset-left));
+    right: max(8px, env(safe-area-inset-right));
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    z-index: 9;
+    max-height: 58dvh;
+    overflow: auto;
+    overscroll-behavior: contain;
+    margin: 0;
+    background: color('raised');
+    border-color: color('line-strong');
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5);
+    transform: translateY(calc(100% + 90px));
+    opacity: 0;
+    filter: blur(var(--panel-blur));
+    visibility: hidden;
+    transition:
+      transform var(--panel-close-dur) var(--panel-ease),
+      opacity var(--panel-close-dur) var(--panel-ease),
+      filter var(--panel-close-dur) var(--panel-ease),
+      visibility 0s linear var(--panel-close-dur);
+  }
+  .sheet.open {
+    transform: none;
+    opacity: 1;
+    filter: none;
+    visibility: visible;
+    transition:
+      transform var(--panel-open-dur) var(--panel-ease),
+      opacity var(--panel-open-dur) var(--panel-ease),
+      filter var(--panel-open-dur) var(--panel-ease),
+      visibility 0s;
+  }
+  .sheet.dragging {
+    transition: none;
+  }
+  .sheet .grab {
+    display: block;
+    width: calc(100% + 36px);
+    height: 28px;
+    min-height: 28px;
+    margin: -18px -18px 2px;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    background: none;
+    touch-action: none;
+    cursor: grab;
+  }
+  .sheet .grab:before {
+    content: '';
+    display: block;
+    width: 36px;
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(238, 234, 227, 0.25);
+    margin: 0 auto;
+  }
+  .sheet h2,
+  .sheet #description {
+    touch-action: none;
+  }
+}
+@include reduced-motion {
+  .sheet {
+    transition: none !important;
+  }
+}
+
+// The device drawing at the top of the inspector, with the same presence rim as the map
+.inspector-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  background: color('raised');
+  border: 1px solid color('line-strong');
+
+  .art {
+    width: 34px;
+    height: 34px;
+    fill: none;
+    stroke: color('bone');
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  &::after {
+    content: '';
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: color('ash');
+    border: 2px solid color('surface');
+  }
+  &.is-online::after {
+    background: color('good');
+  }
+  &.is-unknown::after {
+    background: color('surface');
+    border: 1.5px solid color('ash');
+  }
+}

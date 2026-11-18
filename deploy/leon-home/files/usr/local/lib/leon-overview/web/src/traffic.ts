@@ -18,7 +18,7 @@ export function createTrafficView({ getState, trafficCurrent, select }: ViewCont
       if (current && latest && typeof latest[index] === 'number') element.append(mbps(latest[index]), text('small', ' Mbps'));
       else element.textContent = '—';
     }
-    $('#traffic-at').textContent = current ? 'Router ' + time(router.observedAt) : 'No current reading';
+    $('#traffic-at').textContent = current ? 'Router, ' + time(router.observedAt) : 'No current reading';
     drawChart(
       $('#total-chart', SVGSVGElement),
       samples.map(sample => [sample[1], sample[2]])
@@ -30,9 +30,9 @@ export function createTrafficView({ getState, trafficCurrent, select }: ViewCont
     const top = Math.max(1, ...rows.map(device => device.traffic.downloadRouterMbps || 0)),
       list = $('#device-list');
     list.replaceChildren();
-    $('#device-count').textContent = rows.length + ' with router readings';
+    $('#device-count').textContent = rows.length ? rows.length + (rows.length === 1 ? ' device' : ' devices') : '';
     if (!rows.length) {
-      list.append(text('li', 'No devices with router readings.', 'muted small'));
+      list.append(text('li', current ? 'No device is reporting traffic right now.' : 'No current router reading. Unlock the router session to see traffic by device.', 'muted small empty-row'));
       return;
     }
     for (const device of rows) {

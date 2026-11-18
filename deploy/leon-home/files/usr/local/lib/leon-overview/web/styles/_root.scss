@@ -1,0 +1,12 @@
+@use 'tokens' as *;
+
+:root {
+  color-scheme: dark;
+  @each $group in ($colors, $type, $radii, $durations, $easings, $distances, $scales, $blurs) {
+    @each $name, $value in $group {
+      --#{$name}: #{$value};
+    }
+  }
+  --numeric: #{$numeric-font};
+  --gutter: max(16px, env(safe-area-inset-left), env(safe-area-inset-right));
+}

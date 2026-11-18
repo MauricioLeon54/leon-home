@@ -1,5 +1,6 @@
 import { postAction } from './api.js';
 import type { ControlContext, Device, Feedback, Schedule } from './contracts.js';
+import { closeDialog, openDialog, swapText } from './motion.js';
 import { $, feedbackFor } from './presentation.js';
 import { parseSchedule } from './snapshot.js';
 export function createDeviceControls({
@@ -46,8 +47,7 @@ export function createDeviceControls({
       button.disabled = false;
     }
     const [tone, message] = feedbackFor(RENAME_OUTCOMES, result, 'invalid');
-    status.textContent = message;
-    status.className = 'small ' + tone;
+    swapText(status, message, 'small ' + tone);
     $('#rename-input', HTMLInputElement).blur();
     await refresh();
   }
@@ -104,11 +104,11 @@ export function createDeviceControls({
     ok.textContent = 'Pause';
     ok.className = 'danger';
     ok.onclick = () => {
-      dialog.close();
+      closeDialog(dialog);
       void applyPause(device.id, true);
     };
-    $('#confirm-cancel', HTMLButtonElement).onclick = () => dialog.close();
-    dialog.showModal();
+    $('#confirm-cancel', HTMLButtonElement).onclick = () => closeDialog(dialog);
+    openDialog(dialog);
   });
   async function applyPause(id: string, paused: boolean): Promise<void> {
     if (pausePending) return;
@@ -201,9 +201,7 @@ export function createDeviceControls({
   } satisfies Record<string, Feedback>;
   function scheduleStatus(result: string) {
     const [tone, message] = feedbackFor(SCHEDULE_OUTCOMES, result, 'invalid');
-    const status = $('#sched-status');
-    status.textContent = message;
-    status.className = 'small ' + tone;
+    swapText($('#sched-status'), message, 'small ' + tone);
   }
   async function saveSchedule(schedule: Schedule | null): Promise<boolean> {
     const box = $('#schedule');

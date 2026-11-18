@@ -1,0 +1,91 @@
+// Single source of design tokens. Maps are emitted as CSS custom properties by _root.scss,
+// because TypeScript reads motion durations at runtime. Sass-only values (breakpoints) stay here.
+@use 'sass:map';
+
+$colors: (
+  'bg': #0e0e0e,
+  'surface': #161615,
+  'raised': #1d1d1b,
+  'bone': #eeeae3,
+  'ash': #a39e94,
+  'line': rgba(238, 234, 227, 0.09),
+  'line-strong': rgba(238, 234, 227, 0.18),
+  'good': #75b891,
+  'warn': #d4a866,
+  'down': #9fc3e8,
+  'up': #d9a3c7,
+  'ink': #111110,
+  'off': #3a3a37,
+  // Surfaces with a single use: the router's port well and its sockets
+  'well': #0b0b0a,
+  'socket': #050505,
+);
+
+$type: (
+  'text-s': 13px,
+  'text-m': 15px,
+  'text-l': 17px,
+  'text-xl': 22px,
+);
+
+$radii: (
+  'radius-s': 10px,
+  'radius-m': 14px,
+  'radius-l': 20px,
+);
+
+// transitions.dev motion scale
+$durations: (
+  'duration-stagger': 40ms,
+  'duration-micro': 80ms,
+  'duration-quick': 150ms,
+  'duration-fast': 250ms,
+  'duration-medium': 350ms,
+  'duration-slow': 400ms,
+  'duration-very-slow': 500ms,
+);
+$easings: (
+  'ease-smooth-out': cubic-bezier(0.22, 1, 0.36, 1),
+  'ease-in-out': ease-in-out,
+  'ease-out': ease-out,
+  'ease-linear': linear,
+  'ease-bounce': cubic-bezier(0.34, 1.36, 0.64, 1),
+);
+$distances: (
+  'distance-micro': 4px,
+  'distance-base': 8px,
+  'distance-medium': 12px,
+);
+$scales: (
+  'scale-large': 0.96,
+  'scale-medium': 0.97,
+  'scale-small': 0.98,
+);
+$blurs: (
+  'blur-small': 2px,
+  'blur-medium': 3px,
+);
+
+$numeric-font:
+  ui-rounded,
+  'SF Pro Rounded',
+  -apple-system,
+  BlinkMacSystemFont,
+  system-ui,
+  sans-serif;
+$text-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+
+// Breakpoints (media queries cannot read custom properties)
+$phone-max: 760px;
+$narrow-max: 420px;
+$wide-min: 560px;
+$desktop-min: 900px;
+
+$tap: 44px;
+
+@function color($name) {
+  @if not map.has-key($colors, $name) {
+    @error 'Unknown colour token #{$name}';
+  }
+  @return var(--#{$name});
+}

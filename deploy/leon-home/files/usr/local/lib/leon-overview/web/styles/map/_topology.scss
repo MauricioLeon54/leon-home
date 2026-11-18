@@ -1,0 +1,405 @@
+// Network topology: the router at the top, a trunk, one branch per reported connection and a grid
+// of device tiles. Plain CSS layout: nothing overlaps and the page scrolls like any other.
+@use 'sass:math';
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+$mark: 52px;
+$glyph: 40px;
+$branch-indent: 24px;
+$head-height: 46px;
+$ping-period: 2.8s;
+
+.map-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  margin-bottom: 18px;
+
+  input[type='search'] {
+    flex: 1 1 220px;
+    max-width: 340px;
+    border-radius: 999px;
+    padding-inline: 16px;
+    background: color('surface');
+  }
+}
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  color: color('ash');
+
+  li {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+}
+.key {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: color('ash');
+
+  &.online {
+    background: color('good');
+  }
+  &.unknown {
+    background: none;
+    border: 1.5px solid color('ash');
+  }
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 28px;
+  align-items: start;
+
+  .inspector {
+    position: sticky;
+    top: 16px;
+  }
+  @include phone {
+    display: block;
+  }
+}
+.map {
+  min-width: 0;
+  padding-bottom: 8px;
+}
+.status {
+  display: inline-block;
+  margin: 0 0 14px;
+  color: color('bone');
+  font-size: 12px;
+  padding: 7px 12px;
+  border: 1px solid rgba(212, 168, 102, 0.35);
+  border-radius: 999px;
+}
+.empty {
+  margin: 8px 0 0;
+  color: color('ash');
+}
+
+// The router: the LEÓN mark, its name and a one-line summary
+.hub {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+
+  .mark {
+    position: relative;
+    flex: none;
+    width: $mark;
+    height: $mark;
+    border-radius: 50%;
+    border: 1px solid color('line-strong');
+    background: color('surface') url('/brand/symbol.png') center / 26px no-repeat;
+  }
+  .body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .name {
+    font-size: var(--text-l);
+    font-weight: 600;
+    @include ellipsis;
+  }
+  .meta {
+    color: color('ash');
+    font-size: var(--text-s);
+    @include numeric;
+  }
+}
+.node.den {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  margin: -6px -10px;
+  padding: 6px 14px 6px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-m);
+  background: none;
+  text-align: left;
+
+  // Bridge from the mark to the trunk across the button padding
+  .mark::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 100%;
+    height: 8px;
+    border-left: 1px solid color('line-strong');
+  }
+  &.selected {
+    border-color: color('line-strong');
+    background: color('surface');
+  }
+}
+
+// Trunk and branches
+.branches {
+  margin-left: math.div($mark, 2) - 0.5px;
+}
+.branch {
+  position: relative;
+  padding-left: $branch-indent;
+
+  // Vertical trunk; it stops at the last visible branch
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid color('line-strong');
+  }
+  &:not(:has(~ .branch:not([hidden])))::before {
+    bottom: auto;
+    height: math.div($head-height, 2);
+  }
+  // Elbow into the branch heading
+  &::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: math.div($head-height, 2);
+    width: $branch-indent - 8px;
+    border-top: 1px solid color('line-strong');
+  }
+}
+.branch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: $head-height;
+  margin: 0;
+  font-size: var(--text-m);
+  font-weight: 600;
+  color: color('bone');
+
+  .conn {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: color('ash');
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .count {
+    color: color('ash');
+    font-weight: 400;
+    font-size: var(--text-s);
+    @include numeric;
+  }
+}
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 8px;
+  padding-bottom: 16px; // phones fall back to one full-width column, so names are never cut short
+}
+
+// Device tiles
+.tiles .node {
+  display: grid;
+  grid-template-columns: $glyph minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 8px 10px;
+  border: 1px solid color('line');
+  border-radius: var(--radius-m);
+  background: color('surface');
+  text-align: left;
+  transition:
+    border-color var(--duration-quick) var(--ease-smooth-out),
+    background-color var(--duration-quick) var(--ease-smooth-out);
+
+  &:active:not(:disabled) {
+    transform: scale(var(--scale-small));
+  }
+  @include hover {
+    &:not(:disabled):hover {
+      background: color('surface');
+      border-color: color('line-strong');
+    }
+  }
+  &.selected {
+    border-color: color('bone');
+    background: color('raised');
+  }
+  .glyph {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: $glyph;
+    height: $glyph;
+    border-radius: 50%;
+    background: color('raised');
+    border: 1px solid color('line');
+
+    // Presence: filled = seen now, grey = not seen, ring = unknown
+    &::after,
+    &::before {
+      content: '';
+      position: absolute;
+      right: -1px;
+      bottom: -1px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    &::after {
+      background: color('ash');
+      border: 2px solid color('surface');
+    }
+  }
+  .art {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: color('bone');
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .name {
+    font-size: 14px;
+    font-weight: 500;
+    @include ellipsis;
+  }
+  .meta {
+    display: flex;
+    align-items: center;
+    color: color('ash');
+    font-size: 12px;
+    @include ellipsis;
+
+    &.is-flowing {
+      color: color('down');
+      @include numeric;
+    }
+  }
+  .badge {
+    font-size: 10px;
+    padding: 3px 7px;
+  }
+
+  &.is-online .glyph {
+    &::after {
+      background: color('good');
+    }
+    // A small ping from the dot: the only repeating motion, and only for devices seen now
+    &::before {
+      border: 1.5px solid color('good');
+      animation: ping $ping-period var(--ease-out) var(--delay, 0s) infinite;
+    }
+  }
+  &.is-away {
+    .art {
+      stroke: color('ash');
+    }
+    .name {
+      color: color('ash');
+    }
+  }
+  &.is-unknown .glyph {
+    border-style: dashed;
+    border-color: color('line-strong');
+
+    &::after {
+      background: color('surface');
+      border: 1.5px solid color('ash');
+    }
+  }
+  &.is-paused .glyph {
+    border-color: rgba(212, 168, 102, 0.55);
+  }
+  // First paint: transitions.dev staggered reveal
+  &.is-entering {
+    animation: tile-enter var(--duration-slow) var(--ease-smooth-out) var(--stagger, 0ms) both;
+  }
+}
+// Traffic the router reports right now: three dots that pass along, like data arriving
+.activity {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: 5px;
+
+  i {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: activity 1.2s var(--ease-in-out) infinite;
+
+    &:nth-child(2) {
+      animation-delay: 0.15s;
+    }
+    &:nth-child(3) {
+      animation-delay: 0.3s;
+    }
+  }
+}
+@keyframes ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  60%,
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+@keyframes activity {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@keyframes tile-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--distance-base));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@include reduced-motion {
+  .tiles .node.is-online .glyph::before,
+  .activity i,
+  .tiles .node.is-entering {
+    animation: none !important;
+  }
+  .tiles .node.is-online .glyph::before {
+    opacity: 0;
+  }
+  .activity i {
+    opacity: 1;
+  }
+}

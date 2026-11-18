@@ -729,8 +729,36 @@ def problems(data):
     return found
 
 
-def tile(value, label, tone=''):
-    return f'<div class="tile {tone}"><b>{e(value)}</b><span>{e(label)}</span></div>'
+def reading(value, label, tone=''):
+    return f'<div class="reading {tone}"><b>{e(value)}</b><span>{e(label)}</span></div>'
+
+
+CHEVRON = (
+    '<span class="t-acc-chevron" aria-hidden="true">'
+    '<svg viewBox="0 0 16 16"><path d="M4 6.5 8 10.5 12 6.5"/></svg></span>'
+)
+
+
+def disclosure(key, title, summary, body, tone='', nested=False):
+    """Collapsed detail; home.ts opens it and keeps it open across refreshes."""
+    return (
+        f'<section class="{"t-acc nested" if nested else "section t-acc"}" id="{key}" data-open="false">'
+        f'<button type="button" class="t-acc-head{" quiet" if nested else ""}" aria-expanded="false" '
+        f'aria-controls="{key}-panel"><span class="title">{e(title)}</span>'
+        f'<span class="summary {tone}">{e(summary)}</span>{CHEVRON}</button>'
+        f'<div class="t-acc-panel" id="{key}-panel" inert><div class="t-acc-panel-inner">'
+        f'<div class="t-acc-body">{body}</div></div></div></section>'
+    )
+
+
+def section_head(title, meta='', tone='', link=''):
+    meta_html = f'<span class="meta {tone}">{e(meta)}</span>' if meta else ''
+    return f'<div class="section-head"><h2>{e(title)}</h2>{meta_html}{link}</div>'
+
+
+def panel(key, title, meta, body, tone=''):
+    """A visible section: its head carries the summary, its body the readings."""
+    return f'<section class="section" id="{key}">{section_head(title, meta, tone)}{body}</section>'
 
 
 def row(ok, text, detail='', extra=''):
@@ -842,42 +870,38 @@ def tablet_card(peers, name, observed_at, stored=None, now=None):
     if not name and not detail_rows:
         return ''
     peer = next((p for p in peers or [] if p['name'] == name), None)
+    summary, tone = 'Last reading only', ''
     if not name:
         line = ''
     elif peers is None:
         line = row(None, 'Tablet', 'no Tailscale data')
+        summary = 'Unknown'
     elif peer is None:
         line = row(None, 'Tablet', 'not in the tailnet')
+        summary, tone = 'Not in the tailnet', 'warn'
     elif peer['online']:
         line = row(
             True, 'Tablet', 'online · ' + ('direct connection' if peer['direct'] else 'via relay')
         )
+        summary = 'Online'
     else:
         line = row(False, 'Tablet', f'offline · last seen {ago(peer["seen"])}')
+        summary, tone = f'Offline since {ago(peer["seen"])}', 'warn'
     summary_note = (
         (
-            f'<p class="muted small note">{e(age)}. These readings become stale if the Mac sleeps or LEÓN Labs is closed. '
-            f'</p>'
+            f'<p class="note">{e(age)}. These readings become stale if the Mac sleeps or LEÓN Labs is closed.</p>'
         )
         if detail_rows
         else (
-            '<p class="muted small note">Battery, display and services appear when the Mac publishes a reading.</p>'
+            '<p class="note">Battery, display and services appear when the Mac publishes a reading.</p>'
         )
     )
-    return (
-        f'<section class="card"><h3>Tablet</h3><ul>{line}{detail_rows}</ul>'
-        f'<p class="muted small note">Reachability over Tailscale, read {e(ago(observed_at))}. Phone notification after '
-        f'10 minutes offline.</p>{summary_note}</section>'
+    body = (
+        f'<ul class="rows">{line}{detail_rows}</ul>'
+        f'<p class="note">Reachability over Tailscale, read {e(ago(observed_at))}. Phone notification after '
+        f'10 minutes offline.</p>{summary_note}'
     )
-
-
-def donut(percent):
-    circumference = 2 * 3.14159 * 42
-    filled = max(0.0, min(100.0, percent or 0)) / 100 * circumference
-    return (
-        f'<svg class="donut" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="42"/>'
-        f'<circle class="arc" cx="50" cy="50" r="42" stroke-dasharray="{filled:.1f} {circumference:.1f}"/></svg>'
-    )
+    return panel('tablet', 'Tablet', summary, body, tone)
 
 
 def bars(hours):
@@ -926,50 +950,120 @@ def strip(presence):
     return f'<span class="strip" aria-hidden="true">{cells}</span>' if cells else ''
 
 
+def device_rows(devices, baseline):
+    now = time.time()
+    return ''.join(
+        row(
+            True,
+            d.get('label') or d['ip'],
+            d['ip'] if d.get('label') else (ms(d.get('rttMs')) if d.get('rttMs') else ''),
+            (
+                '<em class="badge new">New</em>'
+                if (d.get('firstSeen') or 0) > baseline + 86400 and now - d['firstSeen'] < 86400
+                else ''
+            )
+            + ('<em class="badge">Unnamed</em>' if d.get('source') == 'unknown' else '')
+            + ('<em class="badge">Auto</em>' if d.get('source') == 'mdns' else '')
+            + strip(d.get('presence')),
+        )
+        for d in devices
+    )
+
+
+def router_link(devices):
+    for device in devices or []:
+        if not isinstance(device, dict) or device.get('role') != 'router':
+            continue
+        try:
+            address = ipaddress.IPv4Address(device.get('ip', ''))
+        except (ValueError, TypeError):
+            continue
+        if address.is_private:
+            return (
+                f'<a href="http://{address}/">Router settings<span aria-hidden="true">›</span></a>'
+            )
+    return ''
+
+
 def render(data, login, nonce):
     if not data:
         return page(
-            '<section class="card hero"><h2>Preparing readings…</h2>'
-            '<p class="muted">The first sample takes a few seconds.</p></section>',
+            '<section class="overview"><h1 class="status-line"><i class="dot idle"></i>Preparing readings…</h1>'
+            '<p class="facts">The first sample takes a few seconds.</p></section>',
             nonce,
         )
-    snapshot, host, dns = data['snapshot'], data['host'], data.get('dns')
+    snapshot, host, dns = data.get('snapshot') or {}, data.get('host') or {}, data.get('dns')
     issues = problems(data)
     units = host.get('units', [])
     running = sum(u['state'] in ('active', 'reloading') for u in units)
     temperature = host.get('temperatureCelsius')
     flags = host.get('throttledFlags')
-    headline = 'Everything is running' if not issues else ' · '.join(issues)
-    hero = (
-        f'<section class="card hero {"ok" if not issues else "bad"}">'
-        f'<div class="status"><i class="dot {"ok" if not issues else "bad"} pulse"></i>'
-        f'<h2>{e(headline)}</h2></div>'
-        f'<p class="muted">Uptime {e(duration(snapshot.get("uptimeSeconds")))} · '
-        f'{running}/{len(units)} services · {e(f"{temperature:.0f} °C" if temperature is not None else "—")}</p></section>'
+
+    # 1. What is happening: one sentence, then only the issues that need attention.
+    headline = (
+        'Everything is running'
+        if not issues
+        else (
+            'One thing needs attention'
+            if len(issues) == 1
+            else f'{len(issues)} things need attention'
+        )
+    )
+    facts = [
+        f'Up {duration(snapshot.get("uptimeSeconds"))}' if snapshot.get('uptimeSeconds') else '',
+        f'{running} of {len(units)} services running' if units else '',
+        f'{temperature:.0f} °C' if temperature is not None else '',
+    ]
+    overview_html = (
+        f'<section class="overview{" attention" if issues else ""}">'
+        f'<h1 class="status-line"><i class="dot {"bad" if issues else "ok"}"></i>{e(headline)}</h1>'
+        + (
+            '<ul class="rows issues">' + ''.join(row(False, issue) for issue in issues) + '</ul>'
+            if issues
+            else ''
+        )
+        + '<p class="facts">'
+        + ''.join(f'<span>{e(fact)}</span>' for fact in facts if fact)
+        + '</p></section>'
     )
 
     internet = data.get('internet') or {}
     router = internet.get('router') or {}
-    net_card = (
-        '<section class="card"><h3>Internet</h3><div class="tiles four">'
-        + tile(ms(router.get('averageMs') if isinstance(router, dict) else None), 'Router')
-        + tile(
-            ms(internet.get('internetMs')),
+    router_ms = router.get('averageMs') if isinstance(router, dict) else None
+    offline = bool(internet) and internet.get('internetMs') is None
+
+    def measured(value, label, missing='unknown'):
+        return reading(ms(value), label, '' if value is not None else missing)
+
+    net_html = (
+        '<section class="section" id="internet">'
+        + section_head(
             'Internet',
-            '' if internet.get('internetMs') is not None else 'warn',
+            'No connection' if offline else ('Connected' if internet else 'No reading'),
+            'warn' if offline else ('good' if internet else ''),
         )
-        + tile(ms(internet.get('dnsMs')), 'Router DNS')
-        + tile(ms(dns.get('upstreamMs') if dns else None), 'Encrypted DNS')
-        + '</div></section>'
+        + '<div class="readings">'
+        + (
+            reading('Offline', 'Internet', 'warn')
+            if offline
+            else measured(internet.get('internetMs'), 'Internet')
+        )
+        + measured(router_ms, 'Router')
+        + measured(internet.get('dnsMs'), 'Router DNS')
+        + measured(dns.get('upstreamMs') if dns else None, 'Encrypted DNS')
+        + '</div><p class="note">Round-trip times measured by the Pi.</p></section>'
     )
 
+    # 2. What I can do: Pi-hole is the one control on this page.
     if dns:
         paused = dns.get('blocking') != 'enabled'
         timer = dns.get('timer')
         state = (
-            'Blocking enabled'
+            'Blocking on'
             if not paused
-            else f'Blocking paused{f" · {int(timer // 60)} min remaining" if timer else ""}'
+            else f'Paused · {int(timer // 60)} min left'
+            if timer
+            else 'Blocking paused'
         )
         controls = (
             ''.join(
@@ -983,100 +1077,123 @@ def render(data, login, nonce):
                 f'<button class="primary">Resume blocking</button></form>'
             )
         )
-        dns_card = (
-            f'<section class="card"><h3>DNS · Pi-hole</h3>'
-            f'<div class="split"><div class="ring">{donut(dns["percent"])}'
-            f'<div><b>{dns["percent"]:.1f}%</b><span>blocked today</span></div></div>'
-            f'<div class="tiles two">{tile(number(dns["queries"]), "Queries")}'
-            f'{tile(number(dns["blocked"]), "Blocked")}{tile(number(dns["gravity"]), "Domains on blocklists")}'
-            f'{tile(str(dns["clients"]), "Active clients")}</div></div>'
-            f'<h4>Last 24 hours <span class="legend"><i class="sw total"></i>queries'
-            f'<i class="sw blocked"></i>blocked</span></h4>{bars(dns["hours"])}'
-            f'<div class="control"><span class="{"warnText" if paused else "goodText"}">{e(state)}</span>'
-            f'<div class="buttons">{controls}</div></div></section>'
-        )
-        lists = (
-            '<div class="grid2">'
-            '<section class="card"><h3>Top blocked domains</h3><ul>'
+        tops = (
+            '<div class="columns"><div><h3>Most blocked domains</h3><ul class="rows">'
             + ''.join(row(None, domain, number(count)) for domain, count in dns['topBlocked'])
-            + '</ul></section><section class="card"><h3>Top clients</h3><ul>'
+            + '</ul></div><div><h3>Most active clients</h3><ul class="rows">'
             + ''.join(row(True, name, number(count)) for name, count in dns['topClients'])
-            + '</ul></section></div>'
+            + '</ul></div></div>'
+        )
+        dns_html = (
+            '<section class="section" id="pihole">'
+            + section_head('Pi-hole', state, 'warn' if paused else 'good')
+            + '<div class="readings three">'
+            + reading(f'{dns["percent"]:.1f}%', 'Blocked today')
+            + reading(number(dns['queries']), 'Queries')
+            + reading(number(dns['blocked']), 'Blocked')
+            + '</div><div class="chart-block"><div class="legend"><span><i class="sw total"></i>Queries</span>'
+            '<span><i class="sw blocked"></i>Blocked</span><span class="span">Last 24 hours</span></div>'
+            + bars(dns['hours'])
+            + f'</div><div class="control"><div class="buttons">{controls}</div>'
+            f'<p class="small muted">{number(dns["gravity"])} domains on blocklists, '
+            f'{dns["clients"]} active clients</p></div>' + tops + '</section>'
         )
     else:
-        dns_card, lists = (
-            '<section class="card"><h3>DNS · Pi-hole</h3><p class="muted">No Pi-hole data.</p></section>',
-            '',
+        dns_html = (
+            '<section class="section" id="pihole">'
+            + section_head('Pi-hole', 'No reading', 'warn')
+            + '<p class="note">Pi-hole did not answer. Its blocking state is unknown until it does.</p></section>'
         )
-
-    power = 'OK' if flags == 0 else ('Check' if flags else '—')
-    pi_card = (
-        '<section class="card"><h3>Raspberry Pi</h3><div class="tiles three">'
-        + tile(
-            f'{temperature:.0f} °C' if temperature is not None else '—',
-            'Temperature',
-            'warn' if (temperature or 0) >= 70 else '',
-        )
-        + tile(f'{host["cpuPercent"]:.0f}%' if host.get('cpuPercent') is not None else '—', 'CPU')
-        + tile(f'{host["load1"]:.2f}' if host.get('load1') is not None else '—', 'Load')
-        + tile(size(snapshot.get('memoryAvailableBytes')), 'Free RAM')
-        + tile(size(snapshot.get('storageFreeBytes')), 'Free storage')
-        + tile(power, 'Power', '' if flags in (0, None) else 'warn')
-        + '</div><h4>Temperature · 24 h</h4>'
-        + sparkline(list(_temperatures))
-        + (
-            '<p class="muted small">Restart needed after system updates.</p>'
-            if host.get('rebootRequired')
-            else ''
-        )
-        + '</section>'
-    )
-
-    unit_card = (
-        '<section class="card"><h3>Services</h3><ul>'
-        + ''.join(
-            row(
-                u['state'] in ('active', 'reloading'),
-                UNIT_LABELS.get(u['name'], u['name']),
-                'active' if u['state'] in ('active', 'reloading') else u['state'],
-            )
-            for u in units
-        )
-        + '</ul></section>'
-    )
 
     devices = data.get('devices', [])
     online = [d for d in devices if d.get('online')]
     baseline = min((d.get('firstSeen') or time.time() for d in devices), default=time.time())
-    device_rows = ''.join(
-        row(
-            True,
-            d.get('label') or d['ip'],
-            d['ip'] if d.get('label') else (ms(d.get('rttMs')) if d.get('rttMs') else ''),
-            (
-                '<em class="badge">new</em>'
-                if (d.get('firstSeen') or 0) > baseline + 86400
-                and time.time() - d['firstSeen'] < 86400
-                else ''
-            )
-            + ('<em class="badge soft">unnamed</em>' if d.get('source') == 'unknown' else '')
-            + ('<em class="badge soft">auto</em>' if d.get('source') == 'mdns' else '')
-            + strip(d.get('presence')),
-        )
-        for d in online[:40]
-    )
+    shown, rest = online[:6], online[6:40]
     naming = data.get('naming') or {}
     moves = [m for m in naming.get('moves', []) if time.time() - m.get('at', 0) < 7 * 86400][-3:]
     move_text = ''.join(
-        f'<p class="muted small">{e(m["name"])} moved from {e(m["from"])} to {e(m["to"])} · '
-        f'{e(ago(m["at"]))}</p>'
+        f'<p class="note">{e(m["name"])} moved from {e(m["from"])} to {e(m["to"])}, {e(ago(m["at"]))}.</p>'
         for m in reversed(moves)
     )
-    home_card = (
-        f'<section class="card"><h3>Home network <span class="count">{len(online)} online</span></h3>'
-        f'<ul>{device_rows or row(None, "No inventory")}</ul>'
-        f'<p class="muted small note">Names follow MAC addresses, even when IP addresses change · '
-        f'{naming.get("registered", 0)} registered</p>{move_text}</section>'
+    home_html = (
+        '<section class="section" id="home-network">'
+        + section_head(
+            'Home network',
+            f'{len(online)} online',
+            link='<a class="head-link" href="/network-map#map">Map</a>',
+        )
+        + f'<ul class="rows">{device_rows(shown, baseline) or row(None, "No inventory yet")}</ul>'
+        + (
+            disclosure(
+                'home-network-all',
+                f'Show {len(rest)} more',
+                '',
+                f'<ul class="rows">{device_rows(rest, baseline)}</ul>',
+                nested=True,
+            )
+            if rest
+            else ''
+        )
+        + f'<p class="note">Names follow MAC addresses, even when IP addresses change. '
+        f'{naming.get("registered", 0)} registered.</p>{move_text}</section>'
+    )
+
+    # 3. Health of the Pi and its services, then the rest of the home; long lists stay collapsed.
+    hot = (temperature or 0) >= 70
+    power = 'OK' if flags == 0 else ('Check' if flags else '—')
+    pi_html = panel(
+        'pi',
+        'Raspberry Pi',
+        ' · '.join(
+            part
+            for part in (
+                f'{temperature:.0f} °C' if temperature is not None else '',
+                f'{host["cpuPercent"]:.0f}% CPU' if host.get('cpuPercent') is not None else '',
+                'restart needed' if host.get('rebootRequired') else '',
+            )
+            if part
+        )
+        or 'No reading',
+        '<div class="readings six">'
+        + reading(
+            f'{temperature:.0f} °C' if temperature is not None else '—',
+            'Temperature',
+            'warn' if hot else '',
+        )
+        + reading(
+            f'{host["cpuPercent"]:.0f}%' if host.get('cpuPercent') is not None else '—', 'CPU'
+        )
+        + reading(f'{host["load1"]:.2f}' if host.get('load1') is not None else '—', 'Load')
+        + reading(size(snapshot.get('memoryAvailableBytes')), 'Free memory')
+        + reading(size(snapshot.get('storageFreeBytes')), 'Free storage')
+        + reading(power, 'Power', '' if flags in (0, None) else 'warn')
+        + '</div><h3>Temperature, last 24 hours</h3>'
+        + sparkline(list(_temperatures))
+        + (
+            '<p class="note">Restart needed after system updates.</p>'
+            if host.get('rebootRequired')
+            else ''
+        ),
+        'warn' if hot or host.get('rebootRequired') else '',
+    )
+    stopped = len(units) - running
+    services_html = panel(
+        'services',
+        'Services',
+        f'{stopped} stopped'
+        if stopped
+        else (f'All {len(units)} running' if units else 'No reading'),
+        '<ul class="rows services">'
+        + ''.join(
+            row(
+                u['state'] in ('active', 'reloading'),
+                UNIT_LABELS.get(u['name'], u['name']),
+                'running' if u['state'] in ('active', 'reloading') else u['state'],
+            )
+            for u in units
+        )
+        + '</ul>',
+        'warn' if stopped else '',
     )
 
     peers = data.get('peers') or []
@@ -1090,16 +1207,19 @@ def render(data, login, nonce):
         )
         for p in peers
     )
-    tail_card = (
-        f'<section class="card"><h3>Tailscale <span class="count">{sum(p["online"] for p in peers)}'
-        f'/{len(peers)}</span></h3><ul>{peer_rows or row(None, "No data")}</ul></section>'
+    tail_html = panel(
+        'tailscale',
+        'Tailscale',
+        f'{sum(p["online"] for p in peers)} of {len(peers)} online' if peers else 'No reading',
+        f'<ul class="rows">{peer_rows or row(None, "No data")}</ul>',
     )
 
     backup = data.get('backups')
     repos = data.get('repos') or []
+    backup_fresh = bool(backup) and (time.time() - backup['at']) < 36 * 3600
     backup_row = (
         row(
-            (time.time() - backup['at']) < 36 * 3600,
+            backup_fresh,
             'Encrypted backup',
             f'{ago(backup["at"])} · {size(backup["bytes"])} · {backup["count"]} copies',
         )
@@ -1107,46 +1227,35 @@ def render(data, login, nonce):
         else row(False, 'Encrypted backup', 'no backups')
     )
     repo_rows = ''.join(row(True, r['name'], f'{r["branch"]} · {ago(r["at"])}') for r in repos)
-    safe_card = f'<section class="card"><h3>Backups and source</h3><ul>{backup_row}{repo_rows}</ul></section>'
+    safe_html = panel(
+        'backups',
+        'Backups and source',
+        f'Last backup {ago(backup["at"])}' if backup else 'No backups',
+        f'<ul class="rows">{backup_row}{repo_rows}</ul>',
+        '' if backup_fresh else 'warn',
+    )
 
-    router_link = ''
-    for device in data.get('devices') or []:
-        if not isinstance(device, dict) or device.get('role') != 'router':
-            continue
-        try:
-            address = ipaddress.IPv4Address(device.get('ip', ''))
-        except (ValueError, TypeError):
-            continue
-        if address.is_private:
-            router_link = f'<a href="http://{address}/">Router<span>›</span></a>'
-            break
     links = (
-        '<section class="card"><h3>Quick links</h3><div class="links">'
-        '<a href="/admin/">Pi-hole panel<span>›</span></a>' + router_link + '</div></section>'
+        '<nav class="section links" aria-label="Other panels">'
+        '<a href="/admin/">Pi-hole admin<span aria-hidden="true">›</span></a>'
+        + router_link(data.get('devices'))
+        + '</nav>'
     )
 
     body = (
-        hero
-        + net_card
-        + dns_card
-        + lists
-        + '<div class="grid2">'
-        + pi_card
-        + unit_card
-        + '</div>'
+        overview_html
+        + net_html
+        + dns_html
+        + f'<div class="pair">{pi_html}{services_html}</div>'
+        + home_html
+        + f'<div class="pair">{tail_html}{safe_html}</div>'
         + tablet_card(
             data.get('peers'), data.get('tabletPeer'), data.get('at'), data.get('tabletSummary')
         )
-        + home_card
-        + '<div class="grid2">'
-        + tail_card
-        + safe_card
-        + '</div>'
         + links
-        + f'<footer>Updated {e(time.strftime("%H:%M:%S", time.localtime(data["at"])))} · '
-        f'your Tailscale account only</footer>'
+        + '<footer>Private to your Tailscale account.</footer>'
     )
-    return page(body, nonce)
+    return page(body, nonce, data.get('at'))
 
 
 TABS = (
@@ -1224,15 +1333,22 @@ def router_unlock(phrase):
     return status if status in UNLOCK_OUTCOMES else 'unlockFailed'
 
 
-def page(body, nonce):
+def page(body, nonce, updated=None):
+    stamp = (
+        f'<time class="updated" datetime="{e(time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(updated)))}">'
+        f'Updated {e(time.strftime("%H:%M", time.localtime(updated)))}</time>'
+        if updated
+        else ''
+    )
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0e0e0e"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="LEÓN Home"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="icon" href="/brand/symbol.png"><link rel="manifest" href="/manifest.webmanifest"><title>LEÓN Home</title><link rel="stylesheet" href="/network-map/assets/home.css"></head><body><main>
+<link rel="icon" href="/brand/symbol.png"><link rel="manifest" href="/manifest.webmanifest"><title>LEÓN Home</title><link rel="stylesheet" href="/network-map/assets/home.css"></head><body>
+<p class="connection" id="connection" role="status" hidden></p><main>
 <header><img class="symbol" src="/brand/symbol.png" alt=""><img class="word" src="/brand/wordmark.png" alt="LEÓN">
-<span class="sub">Home</span></header>{body}</main>{tab_bar('home')}<script type="module" nonce="{nonce}" src="/network-map/assets/home.js"></script></body></html>'''.encode(
+<span class="sub">Home</span>{stamp}</header>{body}</main>{tab_bar('home')}<script type="module" nonce="{nonce}" src="/network-map/assets/home.js"></script></body></html>'''.encode(
         'utf-8'
     )
 

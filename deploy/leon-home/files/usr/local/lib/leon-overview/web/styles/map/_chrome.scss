@@ -1,0 +1,119 @@
+// Page header, router notice and the section-change motion.
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+:root {
+  // transitions.dev page slide for section changes, panel reveal for the device sheet
+  --page-dur: var(--duration-fast);
+  --page-distance: var(--distance-base);
+  --page-blur: var(--blur-medium);
+  --panel-open-dur: var(--duration-slow);
+  --panel-close-dur: var(--duration-medium);
+  --panel-blur: var(--blur-small);
+  --panel-ease: var(--ease-smooth-out);
+}
+main {
+  max-width: 1040px;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 4px 0 18px;
+  flex-wrap: wrap;
+}
+header img {
+  width: 32px;
+  height: 32px;
+}
+header h1 {
+  font-size: 28px;
+  letter-spacing: -0.02em;
+}
+header .chips {
+  margin-left: auto;
+  display: flex;
+  gap: 4px 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-s);
+  color: color('ash');
+  white-space: nowrap;
+}
+
+// Locked router: an inline notice with one action, never a modal
+.notice {
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(212, 168, 102, 0.35);
+  border-radius: var(--radius-l);
+}
+.notice h2 {
+  font-size: var(--text-l);
+}
+.notice p {
+  margin: 4px 0 0;
+  color: color('ash');
+  font-size: var(--text-s);
+}
+.unlock {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.unlock input {
+  flex: 1 1 180px;
+}
+.notice .unlock + p {
+  margin-top: 10px;
+}
+
+// Section change: transitions.dev page slide (enter only; the old view simply leaves)
+.view {
+  display: none;
+}
+.view.active {
+  display: block;
+}
+.view.entering {
+  animation: view-enter var(--page-dur) var(--ease-smooth-out) both;
+}
+@keyframes view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--page-distance));
+    filter: blur(var(--page-blur));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+@include reduced-motion {
+  .view.entering {
+    animation: none !important;
+  }
+}
+.view > .section.first {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 4px;
+}
+
+@include phone {
+  header h1 {
+    font-size: 24px;
+  }
+  header .chips {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

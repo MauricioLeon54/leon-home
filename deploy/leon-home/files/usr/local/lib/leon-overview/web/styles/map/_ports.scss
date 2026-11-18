@@ -1,0 +1,180 @@
+// Router Ethernet ports and Wi-Fi.
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+// Ports
+.panel {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 20px 10px 14px;
+  border-radius: var(--radius-l);
+  background: color('well');
+  border: 1px solid color('line');
+  overflow-x: auto;
+}
+.port {
+  flex: 0 1 74px;
+  min-width: 60px;
+  min-height: 0;
+  padding: 10px 4px 8px;
+  border-radius: var(--radius-m);
+  background: none;
+  border: 1px solid transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  transition: border-color var(--duration-quick) var(--ease-smooth-out);
+}
+.port.selected {
+  border-color: color('line-strong');
+  background: rgba(238, 234, 227, 0.04);
+}
+.port .leds {
+  display: flex;
+  gap: 8px;
+}
+.port .led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: color('off');
+}
+.port .led.on {
+  background: color('good');
+}
+.port .led.amber {
+  background: color('warn');
+}
+.port .led.unknown {
+  background: none;
+  border: 1px solid color('ash');
+}
+.jack {
+  width: 44px;
+  height: 36px;
+  border-radius: 5px;
+  background: color('socket');
+  border: 2px solid color('off');
+  position: relative;
+}
+.jack:after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -2px;
+  height: 8px;
+  background: color('off');
+  border-radius: 2px 2px 0 0;
+}
+.port.off .jack {
+  opacity: 0.4;
+}
+.port b {
+  font-size: var(--text-s);
+  font-weight: 600;
+}
+.port small {
+  font-size: 11px;
+  color: color('ash');
+  white-space: nowrap;
+}
+.port-facts {
+  margin-top: 14px;
+}
+.port-facts .reading b {
+  font-size: var(--text-l);
+}
+code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+// Wi-Fi
+.networks {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.networks li,
+.wifi-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 0;
+  border-bottom: 1px solid color('line');
+  min-width: 0;
+}
+.networks li div,
+.wifi-list li div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.networks b,
+.wifi-list b {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.networks small,
+.wifi-list small {
+  color: color('ash');
+  font-size: var(--text-s);
+}
+.networks .state {
+  flex: none;
+  font-size: var(--text-s);
+  color: color('ash');
+}
+.networks .state.good {
+  color: color('good');
+}
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 14px;
+  flex: none;
+}
+.bars i {
+  width: 5px;
+  border-radius: 1px;
+  background: color('off');
+}
+.bars i:nth-child(1) {
+  height: 5px;
+}
+.bars i:nth-child(2) {
+  height: 9px;
+}
+.bars i:nth-child(3) {
+  height: 14px;
+}
+.bars.good i.on {
+  background: color('good');
+}
+.bars.ok i.on {
+  background: color('bone');
+}
+.bars.weak i.on {
+  background: color('warn');
+}
+
+@media (max-width: 360px) {
+  .panel {
+    gap: 2px;
+    padding-inline: 4px;
+  }
+  .port {
+    min-width: 0;
+  }
+  .jack {
+    width: 38px;
+  }
+}

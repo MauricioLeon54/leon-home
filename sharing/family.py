@@ -86,8 +86,10 @@ class Handler(overview.Handler):
 
 def render(data, login, nonce):
     page = original_render(data, login, nonce).decode()
-    link = '<section class="card"><h3>LEÓN Home</h3><div class="links"><a href="/updates">Updates<span>›</span></a></div></section>'
-    return page.replace('</main>', link + '</main>').encode()
+    links = '<nav class="section links" aria-label="Other panels">'
+    return page.replace(
+        links, links + '<a href="/updates">Updates<span aria-hidden="true">›</span></a>', 1
+    ).encode()
 
 
 original_render = overview.render
