@@ -1,0 +1,15 @@
+[Unit]
+Description=LEÓN Home self-repair (DNS, home network link and Tailscale; no other computer needed)
+After=network.target tailscaled.service pihole-FTL.service unbound.service
+
+[Service]
+Type=oneshot
+# Root: it restarts Unbound, Pi-hole FTL, networking and tailscaled, and may reboot (bounded).
+ExecStart=/usr/bin/python3 -I /usr/local/lib/leon-home/runtime/leon_home/selfheal.py
+StateDirectory=leon-home-selfheal
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+TimeoutStartSec=120
+MemoryMax=64M

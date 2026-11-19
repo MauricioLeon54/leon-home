@@ -282,6 +282,7 @@ def install(
     for path in (Path('/var/lib/leon-home-updates'),):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_units(bootstrap)
+    self_heal_base()
     # Only a new dedicated DNS table is replaced; never flush Tailscale's tables/ruleset.
     rules = f'''add table inet leon_home_dns
 flush table inet leon_home_dns
@@ -335,6 +336,7 @@ table inet leon_home_dns {{
         'leon-home-updates.service',
         'leon-home-update-check.timer',
         'leon-router.service',
+        'leon-home-selfheal.timer',
     )
     # Brand reads follow the current release; only generic public images are present.
     brand = Path('/usr/local/share/leon-home')
@@ -366,7 +368,11 @@ UNITS = (
     'leon-home-update-check.service',
     'leon-home-update-check.timer',
     'leon-router.service',
+    'leon-home-selfheal.service',
+    'leon-home-selfheal.timer',
 )
+# Never give up restarting: the default start limit would stop a crash-looping service for good.
+RESTART_ALWAYS = '[Unit]\nStartLimitIntervalSec=0\n\n[Service]\nRestart=always\nRestartSec=5\n'
 
 
 def write_runtime(bootstrap):
@@ -389,6 +395,12 @@ def write_units(bootstrap):
         '/etc/systemd/system/leon-netmap.timer',
         '[Unit]\nDescription=LEÓN Home inventory every five minutes\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=5min\nAccuracySec=30s\n[Install]\nWantedBy=timers.target\n',
     )
+
+
+def self_heal_base():
+    """Local repairs that need no other computer: always-restart for the DNS chain and Tailscale."""
+    for unit in ('tailscaled', 'unbound', 'pihole-FTL'):
+        write(f'/etc/systemd/system/{unit}.service.d/30-leon-restart.conf', RESTART_ALWAYS)
 
 
 def router_base():
@@ -449,6 +461,7 @@ def maintain(bundle, key, fingerprint, bootstrap):
     router_base()
     write_runtime(bootstrap)
     write_units(bootstrap)
+    self_heal_base()
     write(CONFIG / 'broker.sha256', candidate['brokerSha256'] + '\n')
     run('systemctl', 'daemon-reload')
     run('systemctl', 'restart', 'leon-overview.service')
@@ -459,5 +472,6 @@ def maintain(bundle, key, fingerprint, bootstrap):
         'leon-router.service',
         'leon-home-updates.service',
         'leon-home-update-check.timer',
+        'leon-home-selfheal.timer',
     )
     return candidate

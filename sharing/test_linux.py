@@ -316,6 +316,16 @@ def maintenance(bundle, public, fingerprint):
     ]
     assert pathlib.Path('/etc/systemd/system/leon-router.service').is_file()
     assert pathlib.Path('/etc/leon-overview/pihole-app-password').read_bytes() == secret
+    assert pathlib.Path('/etc/systemd/system/leon-home-selfheal.timer').is_file()
+    assert pathlib.Path('/usr/local/lib/leon-home/runtime/leon_home/selfheal.py').is_file()
+    assert (
+        'Restart=always'
+        in pathlib.Path('/etc/systemd/system/tailscaled.service.d/30-leon-restart.conf').read_text()
+    )
+    assert any(
+        command[:3] == ['systemctl', 'enable', '--now'] and 'leon-home-selfheal.timer' in command
+        for command in log
+    )
     assert any(
         command[:3] == ['systemctl', 'enable', '--now'] and 'leon-router.service' in command
         for command in log

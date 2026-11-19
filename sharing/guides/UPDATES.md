@@ -20,6 +20,14 @@ key or supported operating system also requires an explicit administrative maint
 
 ## Perform a maintenance update
 
+The Pi repairs itself without any other computer. Every 2 minutes `leon-home-selfheal.timer` checks
+Unbound, Pi-hole, the Internet, the router and Tailscale. It restarts a DNS service that stopped
+answering, restarts networking when neither the router nor the Internet answers, restarts Tailscale
+when it is disconnected while the Internet works and, as a last resort for a dead network link,
+reboots at most once every 6 hours. An Internet outage outside the house is only recorded. Events
+are kept in `/var/lib/leon-home-selfheal/events.jsonl`. Tailscale, Unbound and Pi-hole also restart
+automatically if they ever stop. This base arrives with a maintenance update.
+
 An administrator performs it on the Pi with the owner's authorization. Download the five release
 files into a new directory and verify them as described in the installation guide. Then extract
 the verified `bootstrap.tar.gz` into another new directory, install any new prerequisites from
