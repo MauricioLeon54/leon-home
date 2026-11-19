@@ -14,6 +14,8 @@ export interface Traffic {
   downloadRouterMbps: number | null;
   uploadRouterMbps: number | null;
   connection: Connection;
+  // Router LAN port of a wired device, as the router reports it.
+  port: number | null;
   band: Band | null;
   signalDbm: number | null;
   history: Array<RatePoint>;

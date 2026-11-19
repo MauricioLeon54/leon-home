@@ -243,5 +243,10 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
     renderPorts();
   }
 
-  return { render: renderPorts, isActing: () => acting };
+  function selectPort(port: number) {
+    selectedPort = port;
+    outcome = null;
+    renderPorts();
+  }
+  return { render: renderPorts, selectPort, isActing: () => acting };
 }

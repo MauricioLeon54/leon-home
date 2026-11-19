@@ -88,17 +88,27 @@ export function createDeviceControls({
     note.className = pending ? '' : outcome ? outcome[0] : '';
   }
   // A wired device cannot be paused by the Wi-Fi filter; its Internet is cut at its router port.
-  // The router does not say which port a device uses, so list the switchable ports with their link.
+  // With the router's port for the device, link straight to it; otherwise list the switchable ports.
   function renderWired(device: Device | undefined) {
-    const row = $('#wired-row');
+    const row = $('#wired-row'),
+      link = $('#wired-link', HTMLAnchorElement);
     row.hidden = !device || device.role === 'router' || device.traffic?.connection !== 'ethernet';
     if (row.hidden) return;
     const telemetry = getState()?.routerTelemetry,
       allowed = new Set(telemetry?.controllablePorts ?? []),
-      ports = (telemetry?.ports ?? []).filter(port => allowed.has(port.port) && port.wan !== true);
-    $('#wired-ports').textContent = ports.length
-      ? 'Ports you can switch off: ' + ports.map(port => 'LAN ' + port.port + (port.enabled === false ? ' (off)' : port.link === 'up' ? ' (connected)' : ' (no cable)')).join(', ') + '.'
-      : 'No port is authorized to be switched off.';
+      ports = (telemetry?.ports ?? []).filter(port => allowed.has(port.port) && port.wan !== true),
+      own = device?.traffic?.port ?? null;
+    link.href = own ? '#ports-' + own : '#ports';
+    link.textContent = own ? 'LAN ' + own : 'Ports';
+    link.setAttribute('aria-label', own ? 'Open port LAN ' + own : 'Open Ethernet ports');
+    $('#wired-ports').textContent = own
+      ? allowed.has(own)
+        ? 'On LAN ' + own + '. Switch off that port to cut its Internet; everything on it disconnects.'
+        : 'On LAN ' + own + ', a protected port. The Wi-Fi pause does not apply to wired devices.'
+      : 'The Wi-Fi pause does not apply to wired devices. ' +
+        (ports.length
+          ? 'Ports you can switch off: ' + ports.map(port => 'LAN ' + port.port + (port.enabled === false ? ' (off)' : port.link === 'up' ? ' (connected)' : ' (no cable)')).join(', ') + '.'
+          : 'No port is authorized to be switched off.');
   }
   $('#pause-switch', HTMLInputElement).addEventListener('change', () => {
     const toggle = $('#pause-switch', HTMLInputElement),

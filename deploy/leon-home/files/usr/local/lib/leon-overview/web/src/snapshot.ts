@@ -46,6 +46,7 @@ function traffic(value: unknown, deviceAddress: string): Traffic | null {
     downloadRouterMbps: finite(item.downloadRouterMbps),
     uploadRouterMbps: finite(item.uploadRouterMbps),
     connection: choice(item.connection, ['ethernet', 'wifi', 'other', 'unknown'], 'unknown'),
+    port: Number.isInteger(item.port) ? finite(item.port, 1, 8) : null,
     band,
     signalDbm: finite(item.signalDbm, -100, -1),
     history: optionalList(item.history, 60).map(ratePoint),

@@ -132,8 +132,8 @@ is one verified operation and is never retried automatically:
   Leave out the port that connects the Pi.
 - **Pausing a device** adds it to the router's Wi-Fi blocklist. Enable the router's Wi-Fi MAC
   filter in blocklist mode first; LEÓN never turns the filter on or changes its mode. Wired
-  devices cannot be paused this way: their page points to the switchable ports instead, because
-  the router does not report which port a device uses. MAC addresses listed in
+  devices cannot be paused this way: their page shows the router port they use, when the
+  router reports it, with a link to switch that port off. MAC addresses listed in
   `/etc/leon-router/protected-devices` are never paused. Weekly pause schedules use the Pi's
   time zone.
 - **Device names** come from the router (the name set in its app, or the device's own name) until

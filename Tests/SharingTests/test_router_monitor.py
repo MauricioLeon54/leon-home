@@ -153,6 +153,17 @@ class HostTests(unittest.TestCase):
         )
         self.assertEqual([row['name'] for row in rows], ['Livingroom TV', 'android-box', None])
 
+    def test_reads_the_lan_port_of_wired_devices_only(self):
+        rows = monitor.normalize(
+            [
+                {'IPAddress': '192.168.3.80', 'InterfaceType': 'LAN', 'Layer2Interface': 'LAN4'},
+                {'IPAddress': '192.168.3.81', 'InterfaceType': '5GHz', 'Layer2Interface': 'SSID2'},
+                {'IPAddress': '192.168.3.82', 'InterfaceType': 'LAN', 'Layer2Interface': 'eth0'},
+                {'IPAddress': '192.168.3.83', 'InterfaceType': 'LAN', 'Layer2Interface': 'LAN14'},
+            ]
+        )
+        self.assertEqual([row['port'] for row in rows], [4, None, None, None])
+
 
 if __name__ == '__main__':
     unittest.main()

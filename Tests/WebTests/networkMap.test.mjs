@@ -135,6 +135,25 @@ for (const browserType of [chromium, webkit]) {
     });
   }
 
+  test(`${browserType.name()} wired device links to its router port instead of a Wi-Fi pause`, async () => {
+    await withPage(browserType, { width: 390, height: 844 }, async ({ page, data, mutations }) => {
+      data.devices[0].canPause = false;
+      data.devices[0].traffic = { connection: 'ethernet', port: 1, downloadRouterMbps: 1, uploadRouterMbps: 0, history: [] };
+      await page.reload();
+      await page.locator('button.node').click();
+      await page.locator('#inspector.open').waitFor();
+      assert.equal(await page.locator('#pause-row').isHidden(), true);
+      assert.match(await page.locator('#wired-ports').innerText(), /On LAN 1\. Switch off that port/);
+      assert.match(await page.locator('#details').innerText(), /Router port\s+LAN 1/);
+      await page.screenshot({ animations: 'disabled', path: `test-results/wired-${browserType.name()}.png`, fullPage: true });
+      await page.locator('#wired-link').click();
+      await page.locator('#view-ports.active').waitFor();
+      assert.match(await page.locator('#port-detail').innerText(), /Enabled/);
+      assert.equal(await page.locator('#port-detail li.selected').count(), 1);
+      assert.deepEqual(mutations, []);
+    });
+  });
+
   test(`${browserType.name()} locked router hides current rates without automatic mutation`, async () => {
     await withPage(browserType, { width: 1100, height: 850 }, async ({ page, data, mutations }) => {
       data.routerTelemetry.status = 'locked';

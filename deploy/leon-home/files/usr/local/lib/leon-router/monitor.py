@@ -144,6 +144,13 @@ def normalize_wifi(basic, radio, guest):
     }
 
 
+def ethernet_port(value):
+    """LAN port number from HostInfo Layer2Interface (for example LAN4 or ...Config.4); None otherwise."""
+    match = re.fullmatch(r'[A-Za-z_. ]{0,64}?(\d{1,2})', value) if isinstance(value, str) else None
+    number = int(match.group(1)) if match else None
+    return number if number is not None and 1 <= number <= MAX_PORTS else None
+
+
 def normalize(rows):
     if not isinstance(rows, list):
         raise ProbeError('invalidInventory')
@@ -175,6 +182,9 @@ def normalize(rows):
                 'name': name or None,
                 'active': row.get('Active46') is True,
                 'connection': connection,
+                'port': ethernet_port(row.get('Layer2Interface'))
+                if connection == 'ethernet'
+                else None,
                 'downloadRouterMbps': rate('DownRate'),
                 'uploadRouterMbps': rate('UpRate'),
                 'band': interface if interface in WIFI_BANDS else None,
@@ -353,6 +363,15 @@ def read_state(router, history):
             {str(key)[:40] for row in raw_hosts[:256] if isinstance(row, dict) for key in row}
         )
         print(f'HostInfo fields {",".join(fields[:96])}', file=sys.stderr, flush=True)  # names only
+        # Interface labels of wired rows (such as LAN4) carry no device identity.
+        wired = sorted(
+            {
+                printable(row.get('Layer2Interface'), 64) or '-'
+                for row in raw_hosts[:256]
+                if isinstance(row, dict) and row.get('InterfaceType') == 'LAN'
+            }
+        )
+        print(f'HostInfo wired interfaces {",".join(wired[:16])}', file=sys.stderr, flush=True)
         router.hosts_shape_logged = True
     rows = normalize(raw_hosts)
     observed_at = time.time()

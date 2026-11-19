@@ -61,6 +61,7 @@ export function createInspector({ getState, scanCurrent, trafficCurrent, refresh
       ['Download', current && traffic ? mbps(traffic.downloadRouterMbps) + ' Mbps' : 'No current reading'],
       ['Upload', current && traffic ? mbps(traffic.uploadRouterMbps) + ' Mbps' : 'No current reading'],
     ];
+    if (traffic?.port) rows.push(['Router port', 'LAN ' + traffic.port]);
     if (current && traffic?.band) rows.push(['Wi-Fi band', bandName(traffic.band)], ['Signal', signalText(traffic.signalDbm)]);
     if (device.isNew) rows.push(['New device', 'First seen in the last 24 hours']);
     for (const [label, value] of rows) {

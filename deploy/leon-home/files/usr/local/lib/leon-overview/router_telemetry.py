@@ -182,6 +182,7 @@ def clean(value, now):
 
         connection = row.get('connection')
         signal = row.get('signalDbm')
+        port = row.get('port')
         devices.append(
             {
                 'address': address,
@@ -191,6 +192,9 @@ def clean(value, now):
                 'connection': connection
                 if connection in ('ethernet', 'wifi', 'other')
                 else 'unknown',
+                'port': port
+                if connection == 'ethernet' and type(port) is int and 1 <= port <= MAX_PORTS
+                else None,
                 'band': row.get('band')
                 if status == 'current' and row.get('band') in BANDS
                 else None,

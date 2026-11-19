@@ -62,7 +62,10 @@ function updateChips() {
 // ---------------------------------------------------------------- views
 let shown: View | null = null;
 function show(requested: string) {
-  const view = VIEWS.find(view => view === requested) ?? 'map';
+  // #ports-4 opens Ports with LAN 4 selected (linked from a wired device).
+  const portLink = /^ports-([1-8])$/.exec(requested);
+  if (portLink) ports.selectPort(Number(portLink[1]));
+  const view = portLink ? 'ports' : (VIEWS.find(view => view === requested) ?? 'map');
   for (const name of VIEWS) $('#view-' + name).classList.toggle('active', name === view);
   // Only a user's section change animates; the first paint and data refreshes stay still.
   if (shown !== null && shown !== view) {
