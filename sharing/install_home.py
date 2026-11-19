@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from leon_home.contracts import ReleaseError, Site, read_json  # noqa: E402
-from leon_home.install import install, preflight, support_key  # noqa: E402
+from leon_home.install import install, maintain, preflight, support_key, verified_bundle  # noqa: E402
 
 MESSAGES = {
     'existingInstallation': 'This Pi already has an installation. To resume an interrupted new setup, use the exact same bundle with --resume.',
@@ -22,7 +22,28 @@ MESSAGES = {
     'invalidSupportKey': 'The support key must be a valid Ed25519 public key.',
     'rootRequired': 'Run this setup assistant with sudo to install.',
     'invalidPassword': 'The Pi-hole application password has an invalid format.',
+    'setupIncomplete': 'Maintenance needs a completed installation. Finish or resume the initial setup first.',
+    'notNewer': 'This release is not newer than the installed version.',
+    'recoveryNeeded': 'An update is waiting for recovery. Restart the update service and review its status first.',
+    'rolledBack': 'The new version failed its health check and the previous version was restored. Nothing else changed.',
 }
+
+
+def maintenance(options):
+    from leon_home.install import base_pending
+
+    candidate = verified_bundle(options.bundle, options.key, options.fingerprint)
+    resuming = base_pending(candidate)
+    print(
+        f'Verified bundle: LEÓN Home {candidate["version"]} (maintenance'
+        + (', resuming the base update).' if resuming else ').')
+    )
+    print('Plan: switch the application with a health check, then update the privileged base.')
+    if not options.apply:
+        print('Checks complete. No changes were made. Add --apply to perform maintenance.')
+        return
+    maintain(options.bundle, options.key, options.fingerprint, Path(__file__).resolve().parent)
+    print('Maintenance complete. The panel and updates restarted with the new base.')
 
 
 def wizard(repository):
@@ -51,8 +72,15 @@ def main():
     parser.add_argument('--support-key', type=Path)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--resume', action='store_true')
+    parser.add_argument(
+        '--maintenance', action='store_true', help='update an existing installation (administrator)'
+    )
     options = parser.parse_args()
     try:
+        if options.maintenance:
+            if options.site or options.support_key or options.resume:
+                parser.error('--maintenance uses the installed site configuration')
+            return maintenance(options)
         value = read_json(options.site) if options.site else wizard(options.repository)
         site = Site.parse(value)
         candidate, _ = preflight(

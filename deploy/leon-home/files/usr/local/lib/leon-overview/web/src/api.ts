@@ -39,7 +39,7 @@ interface ActionRequests {
   '/network-map/pause': { address: string; paused: boolean };
   '/network-map/schedule': { address: string; schedule: Schedule | null };
   '/network-map/port': { port: number; enabled: boolean };
-  '/network-map/unlock': { phrase: string };
+  '/network-map/unlock': { phrase: string; password?: string };
 }
 export async function postAction<K extends keyof ActionRequests>(path: K, body: ActionRequests[K], token: string): Promise<{ httpStatus: number; ok: boolean; outcome: string }> {
   const controller = new AbortController(),

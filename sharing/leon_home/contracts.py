@@ -42,6 +42,7 @@ FILES = frozenset(
         )
     ]
     + ['inventory/leon-netmap', 'inventory/netmap.py']
+    + ['router/monitor.py', 'router/router_read_probe.py']
     + [
         'brand/' + name
         for name in ('symbol-web.png', 'wordmark-web.png', 'apple-touch-icon.png', 'icon-512.png')

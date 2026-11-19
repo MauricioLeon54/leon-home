@@ -56,7 +56,9 @@ TABLET_PEER_FILE = '/etc/leon-tablet/peer'
 TABLET_SUMMARY_FILE = '/var/lib/leon-tablet-phone/summary.json'
 ROUTER_CONTROL_SOCKET = '/run/leon-router/control.sock'
 ROUTER_UNLOCK_SOCKET = '/run/leon-router/unlock.sock'
-UNLOCK_OUTCOMES = frozenset({'current', 'unlockFailed', 'busy', 'notConfigured'})
+UNLOCK_OUTCOMES = frozenset(
+    {'current', 'unlockFailed', 'busy', 'notConfigured', 'alreadyConfigured', 'setupUnavailable'}
+)
 NETMAP_STATE = '/var/lib/leon-netmap/state.json'
 KNOWN_DEVICES = '/var/lib/leon-newdevice/known.json'  # MAC -> first-known time (new-device alert)
 # Names set from the phone, MAC -> display name. leon-names merges them into Pi-hole local DNS.
@@ -1318,13 +1320,14 @@ def router_action(request):
     return status if status in PORT_OUTCOMES else 'unverified'
 
 
-def router_unlock(phrase):
-    """Forward the owner's vault phrase once; the monitor decrypts its vault copy. Never logged or kept."""
+def router_unlock(request):
+    """Forward the owner's vault phrase once; the monitor decrypts its vault copy. With a router
+    password it asks the monitor to create the vault instead. Never logged or kept."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(60)  # vault scrypt on the Pi (~8 s), router login and first reads
         connection.connect(ROUTER_UNLOCK_SOCKET)
         try:
-            connection.sendall(json.dumps({'phrase': phrase}).encode())
+            connection.sendall(json.dumps(request).encode())
             connection.shutdown(socket.SHUT_WR)
             raw = connection.recv(257)
             status = json.loads(raw).get('status') if len(raw) <= 256 else None
@@ -1515,15 +1518,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             request = json.loads(self.rfile.read(length))
             if (
                 not isinstance(request, dict)
-                or set(request) != {'phrase'}
-                or not isinstance(request['phrase'], str)
-                or not 1 <= len(request['phrase'].encode()) <= 1024
+                or set(request) not in ({'phrase'}, {'phrase', 'password'})
+                or not all(isinstance(value, str) for value in request.values())
+                or not all(1 <= len(value.encode()) <= 1024 for value in request.values())
             ):
                 raise ValueError('Invalid unlock request')
         except ValueError:
             return self.reply(400, b'{"status":"invalid"}', 'application/json; charset=utf-8')
         try:
-            outcome = router_unlock(request['phrase'])
+            outcome = router_unlock(request)
         except (OSError, ValueError):
             return self.reply(503, b'{"status":"unavailable"}', 'application/json; charset=utf-8')
         print(f'phone unlock outcome={outcome} by owner', file=sys.stderr, flush=True)

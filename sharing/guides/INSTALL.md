@@ -26,7 +26,7 @@ SSH key. Only its **public** part goes on the Pi; the private key stays with you
    changing the DNS offered to other devices. Verify the SSH host fingerprint on the device or
    through trusted setup material. Do not automatically accept an unknown fingerprint.
 3. Update the system and install prerequisites from its package repositories:
-   `sudo apt update`, then `sudo apt install python3 openssl nftables unbound dns-root-data openssh-server sudo`.
+   `sudo apt update`, then `sudo apt install python3 openssl nftables unbound dns-root-data openssh-server sudo age`.
 4. Install **Pi-hole v6** using the [official procedure](https://docs.pi-hole.net/main/basic-install/).
    Download and review its installer before running it. Keep your administrator password.
    Create an application password in Pi-hole for LEÓN statistics; enter it locally, never in chat.
@@ -93,8 +93,8 @@ needs operator review.
 
 1. Connect Tailscale on your phone. Open **your Pi's** HTTPS address shown by
    `tailscale serve status`. Add it to your home screen from Safari or your browser.
-2. Check Home and Network. The first reading takes a moment. Traffic measurements and port
-   controls depend on your router and stay unavailable until its capabilities are verified.
+2. Check Home and Network. The first reading takes a moment. Traffic measurements, port
+   switches and device pauses need the router connection described below.
 3. Test DNS on one device at home. Set its manual DNS to the Pi's reserved LAN address, then
    check browsing and filtering. To revert, restore automatic DNS.
 4. For filtering outside home, set your Pi's Tailscale IP as a DNS server in **your tailnet** and
@@ -107,6 +107,36 @@ needs operator review.
 Pi-hole filters DNS; it does not block every advertisement or replace safe browsing. Applications
 with their own DNS, encrypted DNS and router-advertised IPv6 DNS can bypass filtering. Whole-home
 DNS changes require a separate configuration appropriate to your router.
+
+## Connect your router
+
+Router readings and controls support the web interface of the HUAWEI WiFi BE3 Pro. Other
+routers stay unavailable; the inventory map, DNS and panel work without a router connection.
+
+1. Open **Network** on the panel. When the Pi has no router connection, the locked notice asks
+   for a new LEÓN vault passphrase of at least 12 characters, the same passphrase again and the
+   router administrator password. Choose **Connect router**.
+2. The Pi first signs in to its default gateway with that password. Only if the router accepts
+   it, the Pi encrypts the router address and password with `age` under your passphrase in
+   `/var/lib/leon-router`, readable only by the router monitor account.
+3. Keep the passphrase in your password manager. After the Pi or the monitor restarts, router
+   readings are locked until you unlock them with the passphrase. One attempt per minute is
+   accepted. DNS, the panel and the map keep working while locked.
+
+The monitor reads device traffic, Wi-Fi status and Ethernet ports every 15 seconds. Each change
+is one verified operation and is never retried automatically:
+
+- **Ports** can be switched off only when an administrator lists them in
+  `/etc/leon-router/controllable-ports`, for example `3 4`. The WAN port is always refused.
+  Leave out the port that connects the Pi.
+- **Pausing a device** adds it to the router's Wi-Fi blocklist. Enable the router's Wi-Fi MAC
+  filter in blocklist mode first; LEÓN never turns the filter on or changes its mode. Wired
+  devices cannot be paused. MAC addresses listed in `/etc/leon-router/protected-devices` are
+  never paused. Weekly pause schedules use the Pi's time zone.
+
+If the router password changes, an administrator removes `/var/lib/leon-router/router.age` and
+restarts `leon-router.service`, then you connect again. Anyone with administrative access to the
+Pi can operate the router monitor while it is unlocked.
 
 ## Support and recovery
 

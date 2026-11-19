@@ -68,7 +68,7 @@ def start_panel():
             'leon-overview',
             'leon-home-health',
             ['python3', '-I', '/opt/leon-home/current/app/family.py'],
-            ('leon-overview', 'leon-home-control'),
+            ('leon-overview', 'leon-home-control', 'leon-router'),
         ),
         env=environment,
         stdout=subprocess.DEVNULL,
@@ -200,7 +200,7 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
         )
         return path
 
-    first, second = bundle('0.1.0', 1), bundle('0.2.0', 2)
+    first, second, third = bundle('0.1.0', 1), bundle('0.2.0', 2), bundle('0.3.0', 3)
     der = subprocess.run(
         ['openssl', 'pkey', '-pubin', '-in', str(public), '-outform', 'DER'],
         check=True,
@@ -295,6 +295,7 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
         print(
             'Linux fresh install and real signature, Unix permission isolation, owner acceptance and app activation passed.'
         )
+        maintenance(third, public, fingerprint)
     finally:
         for process in processes.values():
             if process.poll() is None:
@@ -302,6 +303,69 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
                 process.wait(timeout=5)
         manager.shutdown()
         manager.server_close()
+
+
+def maintenance(bundle, public, fingerprint):
+    """Administrator maintenance to a newer release, then the real router monitor's local gates."""
+    secret = pathlib.Path('/etc/leon-overview/pihole-app-password').read_bytes()
+    install.maintain(bundle, public, fingerprint, ROOT / 'sharing')
+    assert pathlib.Path('/opt/leon-home/current').resolve().name == '3-0.3.0'
+    assert sorted(path.name for path in pathlib.Path('/opt/leon-home/releases').iterdir()) == [
+        '2-0.2.0',
+        '3-0.3.0',
+    ]
+    assert pathlib.Path('/etc/systemd/system/leon-router.service').is_file()
+    assert pathlib.Path('/etc/leon-overview/pihole-app-password').read_bytes() == secret
+    assert any(
+        command[:3] == ['systemctl', 'enable', '--now'] and 'leon-router.service' in command
+        for command in log
+    )
+    router = pwd.getpwnam('leon-router')
+    for directory in ('/run/leon-router', '/var/lib/leon-router'):
+        path = pathlib.Path(directory)
+        path.mkdir(exist_ok=True)
+        os.chown(path, router.pw_uid, router.pw_gid)
+        path.chmod(0o750)
+    processes['router'] = subprocess.Popen(
+        run_as(
+            'leon-router',
+            'leon-router',
+            ['python3', '-I', '/opt/leon-home/current/router/monitor.py'],
+            ('leon-router',),
+        ),
+        env={
+            **os.environ,
+            'ROUTER_OWNER_USER': '',
+            'ROUTER_VAULT': '/var/lib/leon-router/router.age',
+            'ROUTER_PHONE_SETUP': '1',
+        },
+        cwd='/',
+        stdout=subprocess.DEVNULL,
+        stderr=open('/tmp/router.log', 'wb'),
+    )
+    for _ in range(50):
+        if pathlib.Path('/run/leon-router/unlock.sock').exists():
+            break
+        time.sleep(0.1)
+    token = panel_request('/updates/data')['actionToken']  # the panel restarted with a new key
+    reply = panel_request('/network-map/unlock', {'phrase': 'any phrase'}, token)
+    assert reply == {'status': 'notConfigured'}, reply
+    # One phone attempt per minute, setup included; nothing is written without a router login.
+    setup = {'phrase': 'a new long passphrase', 'password': 'router password'}
+    reply = panel_request('/network-map/unlock', setup, token)
+    assert reply == {'status': 'busy'}, reply
+    assert not pathlib.Path('/var/lib/leon-router/router.age').exists()
+    reach = (
+        "import socket; s=socket.socket(socket.AF_UNIX);s.connect('/run/leon-router/unlock.sock')"
+    )
+    result = subprocess.run(
+        run_as(
+            'leon-support', 'leon-support', ['python3', '-I', '-c', reach], ('leon-home-control',)
+        ),
+        capture_output=True,
+    )
+    assert result.returncode != 0, 'Support reached the router monitor'
+    print('Linux maintenance, router monitor isolation and phone setup gates passed.')
 
 
 if __name__ == '__main__':

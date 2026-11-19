@@ -1,0 +1,36 @@
+[Unit]
+Description=LEÓN Home router monitor (owner-unlocked session)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 -I /opt/leon-home/current/router/monitor.py
+User=leon-router
+Group=leon-router
+# Root only may send a router entry directly; the owner's phone creates and unlocks the vault.
+Environment=ROUTER_OWNER_USER=
+Environment=ROUTER_VAULT=/var/lib/leon-router/router.age
+Environment=ROUTER_PHONE_SETUP=1
+RuntimeDirectory=leon-router
+RuntimeDirectoryMode=0750
+StateDirectory=leon-router
+StateDirectoryMode=0750
+UMask=0027
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Vault setup and unlock run age, whose scrypt needs about 256 MiB and several threads.
+MemoryMax=384M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

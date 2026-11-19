@@ -14,8 +14,8 @@ import subprocess
 import time
 from pathlib import Path
 
-from .contracts import ReleaseError, read_json
-from .release import atomic_json, unpack, verify
+from .contracts import ReleaseError, Site, read_json
+from .release import atomic_json, newer, unpack, verify
 
 ROOT = Path('/opt/leon-home')
 CONFIG = Path('/etc/leon-home')
@@ -66,7 +66,7 @@ def support_key(path):
     return parts[0] + ' ' + parts[1]
 
 
-def preflight(site, bundle, key, fingerprint, resume=False):
+def verified_bundle(bundle, key, fingerprint):
     validate_key(key, fingerprint)
     candidate = verify(bundle, key)
     bootstrap_archive = Path(bundle) / 'bootstrap.tar.gz'
@@ -77,6 +77,11 @@ def preflight(site, bundle, key, fingerprint, resume=False):
         != candidate['bootstrapSha256']
     ):
         raise ReleaseError('invalidRelease')
+    return candidate
+
+
+def preflight(site, bundle, key, fingerprint, resume=False):
+    candidate = verified_bundle(bundle, key, fingerprint)
     marker = CONFIG / 'installing.json'
     existing = (
         ROOT.exists()
@@ -114,6 +119,7 @@ def preflight(site, bundle, key, fingerprint, resume=False):
         'unbound-checkconf',
         'sudo',
         'visudo',
+        'age',
     ):
         if not shutil.which(program):
             raise ReleaseError('missingPrerequisite')
@@ -224,6 +230,7 @@ def install(
         except KeyError:
             run('groupadd', '--system', group)
     account('leon-overview')
+    router_base()
     inventory_user = account('leon-netmap')
     inventory_state = Path('/var/lib/leon-netmap')
     inventory_state.mkdir(mode=0o755, parents=True, exist_ok=True)
@@ -268,33 +275,13 @@ def install(
     unpack(bundle, target, key)
     (ROOT / 'current').unlink(missing_ok=True)
     (ROOT / 'current').symlink_to(target, target_is_directory=True)
-    runtime = Path('/usr/local/lib/leon-home/runtime')
-    runtime.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(
-        Path(bootstrap) / 'leon_home',
-        runtime / 'leon_home',
-        dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'),
-    )
-    for name in ('run_updater.py', 'run_support.py'):
-        shutil.copyfile(Path(bootstrap) / name, runtime / name)
+    write_runtime(bootstrap)
     write(CONFIG / 'overview.env', f'OWNER_LOGINS={site.owner}\n', 0o640, 'leon-overview')
     write(CONFIG / 'inventory.env', f'NETMAP_INTERFACE={site.interface}\n')
     write('/etc/leon-overview/pihole-app-password', app_password + '\n', 0o640, 'leon-overview')
     for path in (Path('/var/lib/leon-home-updates'),):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for name in (
-        'leon-overview.service',
-        'leon-netmap.service',
-        'leon-home-updates.service',
-        'leon-home-update-check.service',
-        'leon-home-update-check.timer',
-    ):
-        write(Path('/etc/systemd/system') / name, (Path(bootstrap) / 'units' / name).read_bytes())
-    write(
-        '/etc/systemd/system/leon-netmap.timer',
-        '[Unit]\nDescription=LEÓN Home inventory every five minutes\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=5min\nAccuracySec=30s\n[Install]\nWantedBy=timers.target\n',
-    )
+    write_units(bootstrap)
     # Only a new dedicated DNS table is replaced; never flush Tailscale's tables/ruleset.
     rules = f'''add table inet leon_home_dns
 flush table inet leon_home_dns
@@ -328,7 +315,9 @@ table inet leon_home_dns {{
         (Path(bootstrap) / 'unbound.conf').read_bytes(),
     )
     run('unbound-checkconf')
-    run('systemctl', 'enable', '--now', 'unbound')
+    # Debian starts unbound on port 53 when installed; a running daemon must reload this config.
+    run('systemctl', 'enable', 'unbound')
+    run('systemctl', 'restart', 'unbound')
     run('pihole-FTL', '--config', 'dns.upstreams', '["127.0.0.1#5335"]')
     run('pihole-FTL', '--config', 'webserver.port', '127.0.0.1:8080o')
     run('pihole-FTL', '--config', 'dns.interface', site.interface)
@@ -345,6 +334,7 @@ table inet leon_home_dns {{
         'leon-netmap.timer',
         'leon-home-updates.service',
         'leon-home-update-check.timer',
+        'leon-router.service',
     )
     # Brand reads follow the current release; only generic public images are present.
     brand = Path('/usr/local/share/leon-home')
@@ -366,4 +356,108 @@ table inet leon_home_dns {{
     run('tailscale', 'serve', '--bg', '--set-path', '/api', 'http://127.0.0.1:8080/api', timeout=90)
     run('tailscale', 'serve', '--bg', 'unix:/run/leon-home-http/http.sock', timeout=90)
     (CONFIG / 'installing.json').unlink()
+    return candidate
+
+
+UNITS = (
+    'leon-overview.service',
+    'leon-netmap.service',
+    'leon-home-updates.service',
+    'leon-home-update-check.service',
+    'leon-home-update-check.timer',
+    'leon-router.service',
+)
+
+
+def write_runtime(bootstrap):
+    runtime = Path('/usr/local/lib/leon-home/runtime')
+    runtime.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        Path(bootstrap) / 'leon_home',
+        runtime / 'leon_home',
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns('__pycache__', '*.pyc'),
+    )
+    for name in ('run_updater.py', 'run_support.py'):
+        shutil.copyfile(Path(bootstrap) / name, runtime / name)
+
+
+def write_units(bootstrap):
+    for name in UNITS:
+        write(Path('/etc/systemd/system') / name, (Path(bootstrap) / 'units' / name).read_bytes())
+    write(
+        '/etc/systemd/system/leon-netmap.timer',
+        '[Unit]\nDescription=LEÓN Home inventory every five minutes\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=5min\nAccuracySec=30s\n[Install]\nWantedBy=timers.target\n',
+    )
+
+
+def router_base():
+    """The router monitor's own account; its owner-chosen port allowlist lives in /etc/leon-router."""
+    account('leon-router')
+    Path('/etc/leon-router').mkdir(mode=0o755, exist_ok=True)
+
+
+def base_pending(candidate):
+    """True when the candidate already runs but its base was not finished (resume); False when it
+    is a newer release. Anything else is refused."""
+    installed = read_json(ROOT / 'current/release.json')
+    if (installed['sequence'], installed['version']) == (
+        candidate['sequence'],
+        candidate['version'],
+    ) and (CONFIG / 'broker.sha256').read_text().strip() != candidate['brokerSha256']:
+        return True
+    newer(candidate, installed)
+    return False
+
+
+def maintain(bundle, key, fingerprint, bootstrap):
+    """Administrator-run privileged base update of a completed installation to a newer signed
+    release with the same trusted key. The application switches first through the normal
+    health-checked activation; the base changes only after that succeeds."""
+    from . import activation
+
+    if os.geteuid() != 0:
+        raise ReleaseError('rootRequired')
+    if (CONFIG / 'installing.json').exists() or not (ROOT / 'current').is_symlink():
+        raise ReleaseError('setupIncomplete')
+    if Path(key).read_bytes() != (CONFIG / 'release-key.pem').read_bytes():
+        raise ReleaseError('invalidSignature')  # trust is never rotated by maintenance
+    candidate = verified_bundle(bundle, key, fingerprint)
+    resuming = base_pending(candidate)
+    if not shutil.which('age'):
+        raise ReleaseError('missingPrerequisite')
+    site = Site.parse(read_json(CONFIG / 'site.json'))
+    if (activation.STATE / 'transaction.json').exists():
+        raise ReleaseError('recoveryNeeded')
+    for unit in ('leon-home-update-check.timer', 'leon-home-updates.service'):
+        run('systemctl', 'stop', unit, timeout=130)
+    if not resuming:
+        previous = (ROOT / 'current').resolve(strict=True)
+        target = ROOT / 'releases' / f'{candidate["sequence"]}-{candidate["version"]}'
+        if target == previous:
+            raise ReleaseError('invalidRelease')
+        shutil.rmtree(target, ignore_errors=True)
+        unpack(bundle, target, key)
+        activation.activate(target, site.owner)
+        for directory in (ROOT / 'releases').iterdir():
+            if (
+                directory.is_dir()
+                and not directory.is_symlink()
+                and directory not in (previous, target)
+            ):
+                shutil.rmtree(directory)
+    router_base()
+    write_runtime(bootstrap)
+    write_units(bootstrap)
+    write(CONFIG / 'broker.sha256', candidate['brokerSha256'] + '\n')
+    run('systemctl', 'daemon-reload')
+    run('systemctl', 'restart', 'leon-overview.service')
+    run(
+        'systemctl',
+        'enable',
+        '--now',
+        'leon-router.service',
+        'leon-home-updates.service',
+        'leon-home-update-check.timer',
+    )
     return candidate

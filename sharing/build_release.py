@@ -28,6 +28,10 @@ def source(name):
         return OVERVIEW / name.removeprefix('app/')
     if name == 'inventory/leon-netmap':
         return ROOT / 'dist/leon-netmap/leon-netmap'
+    if name == 'router/monitor.py':
+        return ROOT / 'deploy/leon-home/files/usr/local/lib/leon-router/monitor.py'
+    if name == 'router/router_read_probe.py':
+        return ROOT / 'scripts/router_read_probe.py'
     if name == 'inventory/netmap.py':
         return ROOT / 'deploy/leon-home/files/usr/local/lib/leon-netmap/netmap.py'
     return ROOT / 'deploy/leon-home/files/usr/local/share/leon-home' / Path(name).name

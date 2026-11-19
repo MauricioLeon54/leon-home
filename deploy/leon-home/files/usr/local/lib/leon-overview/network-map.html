@@ -48,6 +48,24 @@
             aria-label="LEÓN vault passphrase"
             enterkeyhint="go"
           />
+          <input
+            type="password"
+            id="setup-confirm"
+            autocomplete="new-password"
+            maxlength="1024"
+            placeholder="Repeat the new passphrase"
+            aria-label="Repeat the new passphrase"
+            hidden
+          />
+          <input
+            type="password"
+            id="setup-router-password"
+            autocomplete="off"
+            maxlength="1024"
+            placeholder="Router administrator password"
+            aria-label="Router administrator password"
+            hidden
+          />
           <button type="submit" class="primary" id="unlock-submit">Unlock</button>
         </form>
         <p class="small muted" id="unlock-status" role="status">

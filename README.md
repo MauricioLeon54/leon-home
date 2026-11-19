@@ -32,10 +32,11 @@ everyday use happens in the browser. No Mac app is required.
 | Network inventory      | An interactive map with observation times and a prebuilt Rust discovery engine.                     |
 | Owner-approved updates | Signed releases, explicit installation approval, health checks and a previous version for recovery. |
 | Scoped support         | Access to one Pi through a dedicated SSH key and a small set of maintenance commands.               |
+| Router controls        | Traffic, Wi-Fi status, port switches and device pauses for a supported router, after owner unlock.  |
 
-The map represents observed devices, not guaranteed physical wiring. Traffic readings and port
-controls depend on verified router capabilities and are unavailable until configured for that
-installation. Pi-hole filters DNS; it does not block every advertisement or secure all browsing.
+The map represents observed devices, not guaranteed physical wiring. Traffic readings and router
+controls support the HUAWEI WiFi BE3 Pro and need a one-time router connection from the panel;
+other routers stay unavailable. Pi-hole filters DNS; it does not block every advertisement or secure all browsing.
 
 ## Start with one Pi
 

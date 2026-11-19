@@ -163,35 +163,59 @@ export function createRouterControls({ getState, trafficCurrent, refresh, isRefr
     current: ['good', 'Ready. The router session is active.'],
     unlockFailed: ['warn', 'Incorrect passphrase or no router response. Try again in one minute.'],
     busy: ['warn', 'Wait one minute between attempts.'],
-    notConfigured: ['warn', 'The Pi does not have an encrypted vault copy yet.'],
+    notConfigured: ['warn', 'Connect your router once: choose a new passphrase, repeat it and enter the router administrator password.'],
+    alreadyConfigured: ['warn', 'This Pi already has a router vault. Unlock it with its passphrase.'],
+    setupUnavailable: ['warn', 'Ask your support person to connect the router.'],
+    mismatch: ['warn', 'The two passphrases do not match.'],
+    weak: ['warn', 'Use a passphrase of at least 12 characters.'],
     forbidden: ['warn', 'Your page session expired. Reload to continue.'],
     unavailable: ['warn', 'The router monitor is not responding.'],
     invalid: ['warn', 'Invalid passphrase.'],
     network: ['warn', 'LEÓN Home could not be reached.'],
   } satisfies Record<string, Feedback>;
-  // One attempt per submit, never retried; the password field is cleared whatever the outcome.
+  // One attempt per submit, never retried; the password fields are cleared whatever the outcome.
+  // After notConfigured the same form creates the vault: new phrase, its repeat and the router password.
+  let connecting = false;
+  function showSetup(visible: boolean): void {
+    connecting = visible;
+    for (const id of ['#setup-confirm', '#setup-router-password']) {
+      const input = $(id, HTMLInputElement);
+      input.hidden = !visible;
+      input.required = visible;
+    }
+    $('#unlock-password', HTMLInputElement).placeholder = visible ? 'New LEÓN vault passphrase' : 'LEÓN vault passphrase';
+    $('#unlock-submit', HTMLButtonElement).textContent = visible ? 'Connect router' : 'Unlock';
+  }
   $('#unlock-form', HTMLFormElement).addEventListener('submit', event => {
     void unlock(event);
   });
   async function unlock(event: Event): Promise<void> {
     event.preventDefault();
     const field = $('#unlock-password', HTMLInputElement),
+      confirm = $('#setup-confirm', HTMLInputElement),
+      routerPassword = $('#setup-router-password', HTMLInputElement),
       button = $('#unlock-submit', HTMLButtonElement),
       status = $('#unlock-status');
     if (!getState()?.actionToken || button.disabled) return;
-    button.disabled = true;
-    button.textContent = 'Decrypting…';
+    const setup = connecting;
     let result;
-    try {
-      const reply = await postAction('/network-map/unlock', { phrase: field.value }, getState()?.actionToken ?? '');
-      result = reply.httpStatus === 403 ? 'forbidden' : reply.httpStatus === 503 ? 'unavailable' : reply.outcome;
-    } catch (error) {
-      result = 'network';
-    } finally {
-      field.value = '';
-      button.disabled = false;
-      button.textContent = 'Unlock';
+    if (setup && field.value !== confirm.value) result = 'mismatch';
+    else if (setup && new TextEncoder().encode(field.value).length < 12) result = 'weak';
+    else {
+      button.disabled = true;
+      button.textContent = setup ? 'Connecting…' : 'Decrypting…';
+      try {
+        const body = setup ? { phrase: field.value, password: routerPassword.value } : { phrase: field.value };
+        const reply = await postAction('/network-map/unlock', body, getState()?.actionToken ?? '');
+        result = reply.httpStatus === 403 ? 'forbidden' : reply.httpStatus === 503 ? 'unavailable' : reply.outcome;
+      } catch (error) {
+        result = 'network';
+      } finally {
+        button.disabled = false;
+      }
     }
+    field.value = confirm.value = routerPassword.value = '';
+    showSetup(result === 'notConfigured' || (setup && result !== 'current' && result !== 'alreadyConfigured'));
     const [tone, message] = feedbackFor(UNLOCK_OUTCOMES, result, 'unlockFailed');
     swapText(status, message, 'small ' + tone);
     await refresh();

@@ -18,6 +18,28 @@ A **maintenance update** needs assistance. The privileged signature verifier, op
 Pi-hole and Tailscale are maintained separately from normal panel updates. Changing the signing
 key or supported operating system also requires an explicit administrative maintenance step.
 
+## Perform a maintenance update
+
+An administrator performs it on the Pi with the owner's authorization. Download the five release
+files into a new directory and verify them as described in the installation guide. Then extract
+the verified `bootstrap.tar.gz` into another new directory, install any new prerequisites from
+the release notes and run the assistant from that directory:
+
+```sh
+sudo python3 -I install_home.py --maintenance \
+  --bundle /path/to/bundle \
+  --key /path/to/bundle/release-key.pem \
+  --fingerprint VERIFIED_FINGERPRINT
+```
+
+The key must be identical to the installed `/etc/leon-home/release-key.pem`; maintenance never
+changes trust. Without `--apply` it only verifies the signature and checks that the release is
+newer. With `--apply` it switches the application through the normal health check, keeps the
+previous version and only then updates the privileged base, its services and its compatibility
+identifier. If the new version fails its health check, the previous one is restored and the
+base is unchanged. If maintenance is interrupted after the switch, run the same command again;
+it completes the base update without reinstalling the application.
+
 ## Publish a release
 
 The public distribution contains generic application code. Per-household configuration, secrets
