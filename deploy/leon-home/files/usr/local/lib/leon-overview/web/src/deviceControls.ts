@@ -87,6 +87,19 @@ export function createDeviceControls({
     note.textContent = pending ? 'Applying…' : outcome ? outcome[1] : device.paused ? 'Paused. Wi-Fi is blocked until resumed' : 'Allowed · Wi-Fi';
     note.className = pending ? '' : outcome ? outcome[0] : '';
   }
+  // A wired device cannot be paused by the Wi-Fi filter; its Internet is cut at its router port.
+  // The router does not say which port a device uses, so list the switchable ports with their link.
+  function renderWired(device: Device | undefined) {
+    const row = $('#wired-row');
+    row.hidden = !device || device.role === 'router' || device.traffic?.connection !== 'ethernet';
+    if (row.hidden) return;
+    const telemetry = getState()?.routerTelemetry,
+      allowed = new Set(telemetry?.controllablePorts ?? []),
+      ports = (telemetry?.ports ?? []).filter(port => allowed.has(port.port) && port.wan !== true);
+    $('#wired-ports').textContent = ports.length
+      ? 'Ports you can switch off: ' + ports.map(port => 'LAN ' + port.port + (port.enabled === false ? ' (off)' : port.link === 'up' ? ' (connected)' : ' (no cable)')).join(', ') + '.'
+      : 'No port is authorized to be switched off.';
+  }
   $('#pause-switch', HTMLInputElement).addEventListener('change', () => {
     const toggle = $('#pause-switch', HTMLInputElement),
       device = getState()?.devices.find(item => item.id === getSelectedID());
@@ -265,5 +278,5 @@ export function createDeviceControls({
     }
   });
 
-  return { renderRename: renameForm, renderPause, renderSchedule };
+  return { renderRename: renameForm, renderPause, renderWired, renderSchedule };
 }

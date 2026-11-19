@@ -1,7 +1,9 @@
 import importlib.util
 import json
+import os
 import pathlib
 import sys
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -115,3 +117,33 @@ class PanelTests(unittest.TestCase):
             self.assertEqual(authorized(200, 100, 200, {'operation': operation}), allowed)
         self.assertFalse(authorized(300, 100, 200, {'operation': 'status'}))
         self.assertTrue(authorized(100, 100, 200, {'operation': 'apply'}))
+
+
+class PowerTests(unittest.TestCase):
+    def test_power_is_specific_with_and_without_vcgencmd(self):
+        reading = family.overview.power_reading
+        self.assertEqual(reading({'throttledFlags': 0}), ('OK', False))
+        self.assertEqual(reading({'throttledFlags': 0x50005}), ('Low voltage', True))
+        self.assertEqual(reading({'throttledFlags': 0x50000}), ('Low earlier', True))
+        self.assertEqual(reading({'throttledFlags': None, 'underVoltageNow': False}), ('OK', False))
+        self.assertEqual(
+            reading({'throttledFlags': None, 'underVoltageNow': True}), ('Low voltage', True)
+        )
+        self.assertEqual(
+            reading({'throttledFlags': None, 'underVoltageNow': None}), ('Unknown', False)
+        )
+
+    def test_reads_the_rpi_volt_alarm_by_hwmon_name(self):
+        with tempfile.TemporaryDirectory() as root:
+            for entry, name, alarm in (
+                ('hwmon0', 'cpu_thermal', None),
+                ('hwmon1', 'rpi_volt', '1'),
+            ):
+                os.mkdir(os.path.join(root, entry))
+                pathlib.Path(root, entry, 'name').write_text(name + '\n')
+                if alarm is not None:
+                    pathlib.Path(root, entry, 'in0_lcrit_alarm').write_text(alarm + '\n')
+            self.assertTrue(collector.under_voltage_now(root))
+            pathlib.Path(root, 'hwmon1', 'in0_lcrit_alarm').write_text('0\n')
+            self.assertFalse(collector.under_voltage_now(root))
+        self.assertIsNone(collector.under_voltage_now('/nonexistent'))

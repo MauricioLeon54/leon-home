@@ -185,6 +185,7 @@ def clean(value, now):
         devices.append(
             {
                 'address': address,
+                'name': clean_text(row.get('name'), 40) or None,
                 'downloadRouterMbps': rate('downloadRouterMbps'),
                 'uploadRouterMbps': rate('uploadRouterMbps'),
                 'connection': connection

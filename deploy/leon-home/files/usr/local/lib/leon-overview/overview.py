@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import collector  # noqa: E402  (the LEÓN snapshot collector, copied beside this file)
 import internet_health
 import network_map
+import router_telemetry
 import web_assets
 
 PORT = int(os.environ.get('OVERVIEW_PORT', '8090'))
@@ -468,6 +469,7 @@ def apply_identity(devices, now):
     baseline = min(known.values(), default=None)
     protected = protected_macs()
     schedules = pause_schedules()
+    router_names = {row['address']: row['name'] for row in router_telemetry.read(now)['devices']}
     for device in devices:
         mac = macs.get(device['ip'])
         device['mac'] = mac
@@ -476,6 +478,10 @@ def apply_identity(devices, now):
         device['canRename'] = bool(mac)
         if owned.get(mac):
             device['label'] = owned[mac]
+        elif not device.get('label') and router_names.get(device['ip']):
+            device['label'] = router_names[
+                device['ip']
+            ]  # the router's name until the owner sets one
         since = known.get(mac)
         device['isNew'] = bool(
             since and baseline is not None and since > baseline and now - since < NEW_DEVICE_SECONDS
@@ -706,10 +712,29 @@ def ms(value):
     return f'{value:.1f} ms' if value < 10 else f'{value:.0f} ms'
 
 
+def power_reading(host):
+    """(text, needs attention) from vcgencmd flags when readable, else the rpi_volt alarm."""
+    flags = host.get('throttledFlags')
+    if flags is not None:
+        if flags & 0x1:
+            return 'Low voltage', True
+        if flags & 0xE:
+            return 'Throttled', True
+        if flags & 0x10000:
+            return 'Low earlier', True  # since boot; the supply is fine now
+        if flags & 0xE0000:
+            return 'Throttled earlier', True
+        return 'OK', False
+    under = host.get('underVoltageNow')
+    if under is None:
+        return 'Unknown', False
+    return ('Low voltage', True) if under else ('OK', False)
+
+
 def problems(data):
     host, dns, found = data.get('host', {}), data.get('dns'), []
     flags = host.get('throttledFlags')
-    if flags is not None and flags & 0x1:
+    if (flags is not None and flags & 0x1) or (flags is None and host.get('underVoltageNow')):
         found.append('Low voltage')
     elif flags is not None and flags & 0xE:
         found.append('CPU throttled')
@@ -999,7 +1024,6 @@ def render(data, login, nonce):
     units = host.get('units', [])
     running = sum(u['state'] in ('active', 'reloading') for u in units)
     temperature = host.get('temperatureCelsius')
-    flags = host.get('throttledFlags')
 
     # 1. What is happening: one sentence, then only the issues that need attention.
     headline = (
@@ -1142,7 +1166,7 @@ def render(data, login, nonce):
 
     # 3. Health of the Pi and its services, then the rest of the home; long lists stay collapsed.
     hot = (temperature or 0) >= 70
-    power = 'OK' if flags == 0 else ('Check' if flags else '—')
+    power, power_warning = power_reading(host)
     pi_html = panel(
         'pi',
         'Raspberry Pi',
@@ -1168,7 +1192,7 @@ def render(data, login, nonce):
         + reading(f'{host["load1"]:.2f}' if host.get('load1') is not None else '—', 'Load')
         + reading(size(snapshot.get('memoryAvailableBytes')), 'Free memory')
         + reading(size(snapshot.get('storageFreeBytes')), 'Free storage')
-        + reading(power, 'Power', '' if flags in (0, None) else 'warn')
+        + reading(power, 'Power', 'warn' if power_warning else '')
         + '</div><h3>Temperature, last 24 hours</h3>'
         + sparkline(list(_temperatures))
         + (

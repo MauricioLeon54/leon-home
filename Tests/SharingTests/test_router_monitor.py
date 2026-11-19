@@ -138,5 +138,21 @@ class ReceiveTests(unittest.TestCase):
                     self.ask(request, 4242)
 
 
+class HostTests(unittest.TestCase):
+    def test_prefers_the_vendor_app_name_and_falls_back_to_the_dhcp_name(self):
+        rows = monitor.normalize(
+            [
+                {
+                    'IPAddress': '192.168.3.80',
+                    'ActualName': '  Living\nroom  TV ',
+                    'HostName': 'BRAVIA',
+                },
+                {'IPAddress': '192.168.3.81', 'ActualName': '', 'HostName': 'android-box'},
+                {'IPAddress': '192.168.3.82'},
+            ]
+        )
+        self.assertEqual([row['name'] for row in rows], ['Livingroom TV', 'android-box', None])
+
+
 if __name__ == '__main__':
     unittest.main()

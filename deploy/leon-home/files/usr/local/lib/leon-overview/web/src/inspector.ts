@@ -47,6 +47,7 @@ export function createInspector({ getState, scanCurrent, trafficCurrent, refresh
     chart.toggleAttribute('hidden', !device);
     controls.renderRename(device);
     controls.renderPause(device);
+    controls.renderWired(device);
     controls.renderSchedule(device);
     if (!device) return;
     const current = trafficCurrent(),

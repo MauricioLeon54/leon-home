@@ -48,6 +48,19 @@ def read_text(path):
         return None
 
 
+def under_voltage_now(root='/sys/class/hwmon'):
+    """The rpi_volt alarm: True while the supply is low. Unlike vcgencmd it needs no video group."""
+    try:
+        entries = sorted(os.listdir(root))[:32]
+    except OSError:
+        return None
+    for entry in entries:
+        if (read_text(os.path.join(root, entry, 'name')) or '').strip() == 'rpi_volt':
+            value = (read_text(os.path.join(root, entry, 'in0_lcrit_alarm')) or '').strip()
+            return {'0': False, '1': True}.get(value)
+    return None
+
+
 def normalize_network(state):
     if not isinstance(state, dict) or not isinstance(state.get('devices'), list):
         raise ValueError('Invalid network state')
@@ -170,6 +183,7 @@ def host_health():
         'cpuPercent': cpu if cpu is not None and 0 <= cpu <= 100 else None,
         'load1': round(os.getloadavg()[0], 2),
         'throttledFlags': flags,
+        'underVoltageNow': under_voltage_now(),
         'clockSynchronized': {'yes': True, 'no': False}.get(synced),
         'rebootRequired': os.path.exists('/run/reboot-required'),
         'failedUnits': None

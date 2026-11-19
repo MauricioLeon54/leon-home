@@ -68,9 +68,13 @@ a {
   outline-offset: 3px;
 }
 
-// Buttons: 44 px targets, one filled action per decision
-button {
+// Buttons: 44 px targets, one filled action per decision; a.button is a navigation link drawn the same way
+button,
+a.button {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
   min-height: $tap;
   border: 1px solid color('line-strong');
   background: transparent;

@@ -162,12 +162,17 @@ def normalize(rows):
             return value * 8 / 1024 if type(value) is int and 0 <= value <= 12800000 else None
 
         interface = row.get('InterfaceType')
+        # ActualName is the name set in the vendor app; HostName is the device's own DHCP name.
+        name = ' '.join((printable(row.get('ActualName'), 40) or '').split()) or ' '.join(
+            (printable(row.get('HostName'), 40) or '').split()
+        )
         connection = (
             'ethernet' if interface == 'LAN' else 'wifi' if interface in WIFI_BANDS else 'other'
         )
         result.append(
             {
                 'address': address,
+                'name': name or None,
                 'active': row.get('Active46') is True,
                 'connection': connection,
                 'downloadRouterMbps': rate('DownRate'),
@@ -342,7 +347,14 @@ class History:
 
 
 def read_state(router, history):
-    rows = normalize(router.request('/api/system/HostInfo'))
+    raw_hosts = router.request('/api/system/HostInfo')
+    if not getattr(router, 'hosts_shape_logged', False) and isinstance(raw_hosts, list):
+        fields = sorted(
+            {str(key)[:40] for row in raw_hosts[:256] if isinstance(row, dict) for key in row}
+        )
+        print(f'HostInfo fields {",".join(fields[:96])}', file=sys.stderr, flush=True)  # names only
+        router.hosts_shape_logged = True
+    rows = normalize(raw_hosts)
     observed_at = time.time()
     try:
         ports = normalize_ports(
