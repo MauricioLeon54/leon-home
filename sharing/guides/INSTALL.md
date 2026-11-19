@@ -121,7 +121,8 @@ routers stay unavailable; the inventory map, DNS and panel work without a router
    `/var/lib/leon-router`, readable only by the router monitor account.
 3. Keep the passphrase in your password manager. After the Pi or the monitor restarts, router
    readings are locked until you unlock them with the passphrase. One attempt per minute is
-   accepted. DNS, the panel and the map keep working while locked.
+   accepted; an unlock before the router is connected does not count. DNS, the panel and the map
+   keep working while locked.
 
 The monitor reads device traffic, Wi-Fi status and Ethernet ports every 15 seconds. Each change
 is one verified operation and is never retried automatically:

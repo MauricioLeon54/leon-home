@@ -851,6 +851,10 @@ def main():
                         next_poll = time.monotonic() + POLL_SECONDS
                         status = 'current'
                 except ProbeError as error:
+                    if str(error) == 'notConfigured' and uid == OVERVIEW_UID:
+                        # No vault: no password was tried, so the phone keeps its one attempt.
+                        # Reaching this point means the previous attempt is already outside the window.
+                        last_web_unlock = -WEB_UNLOCK_INTERVAL_SECONDS
                     # Do not retry a failed password or replace a working session.
                     status = (
                         str(error)

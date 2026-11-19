@@ -350,8 +350,13 @@ def maintenance(bundle, public, fingerprint):
     token = panel_request('/updates/data')['actionToken']  # the panel restarted with a new key
     reply = panel_request('/network-map/unlock', {'phrase': 'any phrase'}, token)
     assert reply == {'status': 'notConfigured'}, reply
-    # One phone attempt per minute, setup included; nothing is written without a router login.
+    # Without a vault no password is tried, so the phone keeps its attempt for the setup.
+    reply = panel_request('/network-map/unlock', {'phrase': 'any phrase'}, token)
+    assert reply == {'status': 'notConfigured'}, reply
+    # One real phone attempt per minute, setup included; nothing is written without a router login.
     setup = {'phrase': 'a new long passphrase', 'password': 'router password'}
+    reply = panel_request('/network-map/unlock', setup, token)
+    assert reply == {'status': 'unlockFailed'}, reply  # the container has no network gateway
     reply = panel_request('/network-map/unlock', setup, token)
     assert reply == {'status': 'busy'}, reply
     assert not pathlib.Path('/var/lib/leon-router/router.age').exists()
