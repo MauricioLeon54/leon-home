@@ -46,6 +46,9 @@ def bootstrap(output):
     for path in (ROOT / 'sharing/units').glob('*'):
         if path.is_file():
             files['units/' + path.name] = path.read_bytes()
+    files['motd/20-leon-home'] = (
+        ROOT / 'deploy/leon-home/files/etc/update-motd.d/20-leon-home'
+    ).read_bytes()
     digests = {
         name: hashlib.sha256(data).hexdigest()
         for name, data in files.items()

@@ -283,6 +283,7 @@ def install(
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_units(bootstrap)
     self_heal_base()
+    login_summary(bootstrap)
     # Only a new dedicated DNS table is replaced; never flush Tailscale's tables/ruleset.
     rules = f'''add table inet leon_home_dns
 flush table inet leon_home_dns
@@ -403,6 +404,19 @@ def self_heal_base():
         write(f'/etc/systemd/system/{unit}.service.d/30-leon-restart.conf', RESTART_ALWAYS)
 
 
+def login_summary(bootstrap):
+    """The LEÓN login screen replaces the kernel line and Debian's static notice."""
+    write(
+        '/etc/update-motd.d/20-leon-home',
+        (Path(bootstrap) / 'motd/20-leon-home').read_bytes(),
+        0o755,
+    )
+    uname = Path('/etc/update-motd.d/10-uname')
+    if uname.exists():
+        uname.chmod(0o644)  # run-parts skips non-executable scripts; chmod +x restores it
+    write('/etc/motd', '')
+
+
 def router_base():
     """The router monitor's own account; its owner-chosen port allowlist lives in /etc/leon-router."""
     account('leon-router')
@@ -462,6 +476,7 @@ def maintain(bundle, key, fingerprint, bootstrap):
     write_runtime(bootstrap)
     write_units(bootstrap)
     self_heal_base()
+    login_summary(bootstrap)
     write(CONFIG / 'broker.sha256', candidate['brokerSha256'] + '\n')
     run('systemctl', 'daemon-reload')
     run('systemctl', 'restart', 'leon-overview.service')

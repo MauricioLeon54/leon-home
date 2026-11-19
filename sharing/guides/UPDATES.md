@@ -26,7 +26,9 @@ answering, restarts networking when neither the router nor the Internet answers,
 when it is disconnected while the Internet works and, as a last resort for a dead network link,
 reboots at most once every 6 hours. An Internet outage outside the house is only recorded. Events
 are kept in `/var/lib/leon-home-selfheal/events.jsonl`. Tailscale, Unbound and Pi-hole also restart
-automatically if they ever stop. This base arrives with a maintenance update.
+automatically if they ever stop. The base also replaces the SSH login screen with the LEÓN
+symbol, wordmark and a live health summary, and silences the kernel line and Debian's static
+notice. This base arrives with a maintenance update.
 
 An administrator performs it on the Pi with the owner's authorization. Download the five release
 files into a new directory and verify them as described in the installation guide. Then extract

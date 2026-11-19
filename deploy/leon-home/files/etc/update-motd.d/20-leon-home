@@ -1,0 +1,74 @@
+#!/bin/bash
+# LEÓN Home login summary, run by pam_motd for every SSH login. Read-only; each probe is bounded.
+# Art: brand symbol and wordmark as quadrant blocks, 2x2 pixels per cell at half height, e.g.
+#   magick symbol.png -alpha extract -resize 64x32! -threshold 45% -negate -compress none sym.pbm
+lion=(
+  '         ▗▖████▌▐████▗▖         '
+  '       ▗▟█▙▝███▌▐███▘▟█▙▖       '
+  '     ▗▟████▖▜██▌▐██▛▗████▙▖     '
+  '   ▗▟██████▙▝▀▀▘▝▀▀▘▟██████▙▖   '
+  '  ▗▝▀█████▛          ▜█████▀▘▖  '
+  '  ▐██▄▖▀▜▘            ▝▛▀▗▄██▌  '
+  '  ▐█████▌▗▄          ▄▖▐█████▌  '
+  '  ▐█████▌ ▀▀▜█▌  ▐█▛▀▀ ▐█████▌  '
+  '  ▐█████▌              ▐█████▌  '
+  '  ▐█▀▀▀▀▄     ▀██▀     ▄▀▀▀▀█▌  '
+  '   ▗▟█████▄          ▄█████▙▖   '
+  '    ▝▜██████▄      ▄██████▛▘    '
+  '      ▝▜█████ ████ █████▛▘      '
+  '        ▝▜███ ████ ███▛▘        '
+  '          ▝▜█ ████ █▛▘          '
+  '            ▝ ████ ▘            '
+)
+word=(
+  '                      ▗█▀             '
+  '▄▄       ▄▄▄▄▄▄     ▄▄▄▄▄▖    ▗▄▄   ▄▄'
+  '██       ██▀▀▀▀   ▗██▀▀▀██▙   ▐██▙  ██'
+  '██       █████▖   ▐█▌    ██   ▐█▌▜▙ ██'
+  '██       ██       ▐█▙   ▄██   ▐█▌ ▜▙██'
+  '██████▖  ██████    ▀█████▀    ▐█▌  ▜██'
+)
+probe() { timeout 2 "$@" 2>/dev/null; }
+state() { local value; value=$(probe systemctl is-active "$1"); echo "${value:-unknown}"; }
+
+uptime=$(probe uptime -p); uptime=${uptime#up }
+address=$(probe ip -4 route get 1.1.1.1 | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
+tailnet=$(probe tailscale ip -4 | head -n 1)
+temperature=$(probe vcgencmd measure_temp | cut -d= -f2 | sed "s/'C/°C/")
+throttled=$(probe vcgencmd get_throttled | cut -d= -f2)
+read -r load _ </proc/loadavg
+memory=$(awk '/MemTotal/ {t = $2} /MemAvailable/ {a = $2} END {printf "%d / %d MiB", (t - a) / 1024, t / 1024}' /proc/meminfo)
+disk=$(df -h / | awk 'NR == 2 {print $3 " / " $2}')
+
+ink=$'\e[38;2;238;234;227m' dim=$'\e[38;2;170;168;159m' rule=$'\e[38;2;52;51;47m'
+good=$'\e[38;2;142;196;140m' warn=$'\e[38;2;232;176;92m' off=$'\e[0m'
+case "$throttled" in
+  0x0) power="${good}OK" ;;
+  '') power="${dim}unknown" ;;
+  *) power="${warn}ATTENTION $throttled" ;;
+esac
+services=''
+for unit in pihole-FTL unbound tailscaled; do
+  value=$(state "$unit")
+  [[ $value == active ]] && color=$good || color=$warn
+  services+="${color}●${dim} ${unit%-FTL}  "
+done
+
+side=(
+  ''
+  "${word[@]/#/$ink}"
+  ''
+  "${dim}H O M E   ${rule}·${dim}   $(hostname)"
+  "${rule}──────────────────────────────────────"
+  "${dim}uptime   ${ink}${uptime:-unknown}"
+  "${dim}address  ${ink}${address:-no route}${dim}  tailnet ${ink}${tailnet:-offline}"
+  "${dim}load     ${ink}${load}${dim}  temp ${ink}${temperature:-unknown}${dim}  power ${power}"
+  "${dim}memory   ${ink}${memory}${dim}  disk ${ink}${disk}"
+  "${services}"
+)
+
+printf '\n'
+for i in "${!lion[@]}"; do
+  printf '  %s%s%s    %s%s\n' "$ink" "${lion[$i]}" "$off" "${side[$i]:-}" "$off"
+done
+printf '\n'

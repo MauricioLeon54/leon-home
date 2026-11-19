@@ -15,6 +15,7 @@ import socket
 import socketserver
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -201,6 +202,10 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
         return path
 
     first, second, third = bundle('0.1.0', 1), bundle('0.2.0', 2), bundle('0.3.0', 3)
+    # The administrator runs the assistant from the extracted, verified bootstrap archive.
+    bootstrap = work / 'bootstrap'
+    with tarfile.open(first / 'bootstrap.tar.gz') as archive:
+        archive.extractall(bootstrap, filter='data')
     der = subprocess.run(
         ['openssl', 'pkey', '-pubin', '-in', str(public), '-outform', 'DER'],
         check=True,
@@ -232,7 +237,7 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
         first,
         public,
         fingerprint,
-        ROOT / 'sharing',
+        bootstrap,
         'test-application-password',
         'ssh-ed25519 ' + encoded,
     )
@@ -295,7 +300,7 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
         print(
             'Linux fresh install and real signature, Unix permission isolation, owner acceptance and app activation passed.'
         )
-        maintenance(third, public, fingerprint)
+        maintenance(third, public, fingerprint, bootstrap)
     finally:
         for process in processes.values():
             if process.poll() is None:
@@ -305,10 +310,10 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
         manager.server_close()
 
 
-def maintenance(bundle, public, fingerprint):
+def maintenance(bundle, public, fingerprint, bootstrap):
     """Administrator maintenance to a newer release, then the real router monitor's local gates."""
     secret = pathlib.Path('/etc/leon-overview/pihole-app-password').read_bytes()
-    install.maintain(bundle, public, fingerprint, ROOT / 'sharing')
+    install.maintain(bundle, public, fingerprint, bootstrap)
     assert pathlib.Path('/opt/leon-home/current').resolve().name == '3-0.3.0'
     assert sorted(path.name for path in pathlib.Path('/opt/leon-home/releases').iterdir()) == [
         '2-0.2.0',
@@ -318,6 +323,8 @@ def maintenance(bundle, public, fingerprint):
     assert pathlib.Path('/etc/leon-overview/pihole-app-password').read_bytes() == secret
     assert pathlib.Path('/etc/systemd/system/leon-home-selfheal.timer').is_file()
     assert pathlib.Path('/usr/local/lib/leon-home/runtime/leon_home/selfheal.py').is_file()
+    assert os.access('/etc/update-motd.d/20-leon-home', os.X_OK)
+    assert pathlib.Path('/etc/motd').read_text() == ''
     assert (
         'Restart=always'
         in pathlib.Path('/etc/systemd/system/tailscaled.service.d/30-leon-restart.conf').read_text()
