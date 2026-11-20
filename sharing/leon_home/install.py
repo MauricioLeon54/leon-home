@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from .contracts import ReleaseError, Site, read_json
+from .housekeeping import APT_CLEANUP, APT_CLEANUP_PATH
 from .release import atomic_json, newer, unpack, verify
 
 ROOT = Path('/opt/leon-home')
@@ -283,6 +284,7 @@ def install(
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_units(bootstrap)
     self_heal_base()
+    write(APT_CLEANUP_PATH, APT_CLEANUP)
     login_summary(bootstrap)
     # Only a new dedicated DNS table is replaced; never flush Tailscale's tables/ruleset.
     rules = f'''add table inet leon_home_dns
@@ -476,6 +478,7 @@ def maintain(bundle, key, fingerprint, bootstrap):
     write_runtime(bootstrap)
     write_units(bootstrap)
     self_heal_base()
+    write(APT_CLEANUP_PATH, APT_CLEANUP)
     login_summary(bootstrap)
     write(CONFIG / 'broker.sha256', candidate['brokerSha256'] + '\n')
     run('systemctl', 'daemon-reload')

@@ -33,6 +33,7 @@ everyday use happens in the browser. No Mac app is required.
 | Owner-approved updates | Signed releases, explicit installation approval, health checks and a previous version for recovery. |
 | Scoped support         | Access to one Pi through a dedicated SSH key and a small set of maintenance commands.               |
 | Router controls        | Traffic, Wi-Fi status, port switches and device pauses for a supported router, after owner unlock.  |
+| Quiet disk maintenance | Weekly cleanup of obsolete downloaded system packages, using existing operating-system timers.      |
 
 The map represents observed devices, not guaranteed physical wiring. Traffic readings and router
 controls support the HUAWEI WiFi BE3 Pro and need a one-time router connection from the panel;

@@ -313,7 +313,19 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
 def maintenance(bundle, public, fingerprint, bootstrap):
     """Administrator maintenance to a newer release, then the real router monitor's local gates."""
     secret = pathlib.Path('/etc/leon-overview/pihole-app-password').read_bytes()
+    cleanup = pathlib.Path('/etc/apt/apt.conf.d/80-leon-home-cleanup')
+    assert cleanup.is_file()  # installed on a fresh site
+    cleanup.unlink()  # simulate an older base without this policy
     install.maintain(bundle, public, fingerprint, bootstrap)
+    apt_config = subprocess.run(
+        ['apt-config', 'shell', 'interval', 'APT::Periodic::AutocleanInterval'],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    ).stdout.strip()
+    assert apt_config == "interval='7'"
+    assert cleanup.stat().st_mode & 0o777 == 0o644
     assert pathlib.Path('/opt/leon-home/current').resolve().name == '3-0.3.0'
     assert sorted(path.name for path in pathlib.Path('/opt/leon-home/releases').iterdir()) == [
         '2-0.2.0',

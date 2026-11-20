@@ -20,6 +20,20 @@ key or supported operating system also requires an explicit administrative maint
 
 ## Perform a maintenance update
 
+Release 0.3.5 adds weekly cleanup of obsolete downloaded APT package archives using the
+operating system's existing APT timers. It does not uninstall packages, clear DNS caches,
+delete household data or run speed tests. No additional always-running service is added.
+The existing `apt-daily.timer` must remain enabled; inspect it with
+`systemctl status apt-daily.timer`. Check the effective policy with
+`apt-config shell interval APT::Periodic::AutocleanInterval` (expected: `interval='7'`).
+Cleanup starts on the next eligible scheduled run, rather than forcing a cleanup during
+installation. Removing `/etc/apt/apt.conf.d/80-leon-home-cleanup` restores the system's
+previous policy. Application rollback alone does not revert this base configuration.
+
+Existing installations need administrator maintenance for this release; the phone's normal
+application update cannot install system policy. Fresh installations receive it automatically.
+This is disk maintenance, not a remedy for provider outages, packet loss or Wi-Fi congestion.
+
 The Pi repairs itself without any other computer. Every 2 minutes `leon-home-selfheal.timer` checks
 Unbound, Pi-hole, the Internet, the router and Tailscale. It restarts a DNS service that stopped
 answering, restarts networking when neither the router nor the Internet answers, restarts Tailscale
@@ -88,13 +102,13 @@ swiftc sharing/sign_release.swift -o .build/LeonReleaseSigner
 pnpm check
 pnpm build:netmap
 python3 sharing/build_release.py \
-  --version 0.1.2 --sequence 3 \
+  --version 0.3.5 --sequence 9 \
   --notes 'Describe the actual improvement for the person using the panel.' \
-  --output dist/leon-home/0.1.2 \
+  --output dist/leon-home/0.3.5 \
   --signer .build/LeonReleaseSigner
 ```
 
-These version numbers illustrate a release after 0.1.1. Increase both values for every release.
+These version numbers identify the 0.3.5 release. Increase both values for every later release.
 The output directory must be new; the builder refuses to overwrite it. Publish its five files
 only after verifying tests, signatures and correspondence with reviewed source. If the Keychain
 is locked, unlock it and use the original key rather than initializing a replacement.
