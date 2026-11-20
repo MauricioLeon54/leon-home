@@ -23,8 +23,9 @@ key or supported operating system also requires an explicit administrative maint
 Release 0.3.5 adds weekly cleanup of obsolete downloaded APT package archives using the
 operating system's existing APT timers. It does not uninstall packages, clear DNS caches,
 delete household data or run speed tests. No additional always-running service is added.
-The existing `apt-daily.timer` must remain enabled; inspect it with
-`systemctl status apt-daily.timer`. Check the effective policy with
+The existing `apt-daily-upgrade.timer` must remain enabled: its service runs APT cleanup.
+Inspect both built-in timers with `systemctl status apt-daily.timer apt-daily-upgrade.timer`.
+Check the effective policy with
 `apt-config shell interval APT::Periodic::AutocleanInterval` (expected: `interval='7'`).
 Cleanup starts on the next eligible scheduled run, rather than forcing a cleanup during
 installation. Removing `/etc/apt/apt.conf.d/80-leon-home-cleanup` restores the system's
