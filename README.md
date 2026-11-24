@@ -67,8 +67,8 @@ Read [updates and recovery](sharing/guides/UPDATES.md) and
 
 A household can attach a USB drive and share selected folders over its own Tailscale
 connection, and play videos on TVs at home. Follow the [storage setup guide](sharing/guides/STORAGE.md)
-for disk mounting, local account setup and permission checks. In the panel, **Storage** shows the
-drive and **Browse files** searches and downloads its files without changing them.
+for disk mounting, local account setup and permission checks. In the panel, **Drives** shows the
+drive, how to connect from each device, and **Browse files** to search and download files.
 
 ## Development
 

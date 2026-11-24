@@ -2,6 +2,7 @@
 """Print the Samba configuration for one LEÓN Home NAS."""
 
 import argparse
+import ipaddress
 import re
 
 ACCOUNT = re.compile(r'[a-z_][a-z0-9_-]{0,30}')
@@ -28,6 +29,24 @@ def library_path(value):
     return value
 
 
+def lan_address(value):
+    """The Pi's private home address with prefix, such as 192.168.3.152/24."""
+    try:
+        interface = ipaddress.IPv4Interface(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            'Use the Pi address with prefix, e.g. 192.168.1.20/24.'
+        ) from error
+    network = interface.network
+    if (
+        not interface.ip.is_private
+        or network.prefixlen < 16
+        or interface.ip in (network.network_address, network.broadcast_address)
+    ):
+        raise argparse.ArgumentTypeError('Use a private home network of /16 or smaller.')
+    return interface
+
+
 EXCHANGE = """
 [Exchange]
     path = /srv/leon-storage/exchange
@@ -42,13 +61,19 @@ EXCHANGE = """
 """
 
 
-def configuration(owner, guest, library=STORAGE_ROOT + '/library', exchange=True):
+def configuration(owner, guest, library=STORAGE_ROOT + '/library', exchange=True, lan=None):
+    # Tailscale Serve forwards to loopback; an optional home address serves local computers.
+    interfaces = f'127.0.0.1 {lan.with_prefixlen}' if lan else '127.0.0.1'
+    allowed = f'127.0.0.1 {lan.network.with_prefixlen}' if lan else '127.0.0.1'
     shares = f"""[global]
     server role = standalone server
-    interfaces = 127.0.0.1
+    interfaces = {interfaces}
     bind interfaces only = yes
+    hosts allow = {allowed}
+    hosts deny = ALL
     smb ports = 445
     disable netbios = yes
+    multicast dns register = no
     server min protocol = SMB2_02
     map to guest = Never
     load printers = no
@@ -82,11 +107,19 @@ def main():
         action='store_true',
         help='Omit Exchange, for example while the volume is mounted read-only.',
     )
+    parser.add_argument(
+        '--lan',
+        type=lan_address,
+        help='Also serve computers on the home network, e.g. 192.168.1.20/24.',
+    )
     args = parser.parse_args()
     if args.owner == args.guest:
         parser.error('Owner and guest must use separate accounts.')
     print(
-        configuration(args.owner, args.guest, args.library_path, not args.without_exchange), end=''
+        configuration(
+            args.owner, args.guest, args.library_path, not args.without_exchange, args.lan
+        ),
+        end='',
     )
 
 

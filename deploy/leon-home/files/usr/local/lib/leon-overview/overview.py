@@ -14,6 +14,7 @@ page only while visible. The Pi serves prebuilt assets without a JavaScript tool
 import base64
 import calendar
 import collections
+import configparser
 import hashlib
 import hmac
 import html
@@ -1020,7 +1021,7 @@ def router_link(devices):
     return ''
 
 
-STORAGE_LINK = '<a href="/storage">Storage<span aria-hidden="true">›</span></a>'
+STORAGE_LINK = '<a href="/storage">Drives<span aria-hidden="true">›</span></a>'
 
 
 AUTOMATION_LINK = '<a href="/automation">Automation<span aria-hidden="true">›</span></a>'
@@ -1425,14 +1426,207 @@ def usb_storage_rows():
     return ''.join(rows) or row(None, 'No USB storage detected')
 
 
-def storage_destination_rows(mounted, show_automation):
-    destinations = [('Library', 'library'), ('Exchange', 'exchange')]
+SAMBA_CONFIG = '/etc/samba/smb.conf'
+MINIDLNA_CONFIG = '/etc/minidlna.conf'
+# Optional, administrator-written: {"name": "...", "peers": [{"name": "...", "url": "smb://..."}]}
+STORAGE_SETTINGS = '/etc/leon-overview/storage.json'
+DRIVE_NAME = re.compile(r'[^\x00-\x1f\x7f]{1,40}')
+PEER_URL = re.compile(r'smb://[A-Za-z0-9.-]{1,253}(/[A-Za-z0-9 _.-]{1,80})?')
+SHARE_NAME = re.compile(r'[A-Za-z0-9 _.-]{1,40}')
+
+
+def storage_settings():
+    """Validated drive name and peer drives; malformed entries are ignored, never rendered."""
+    try:
+        with open(STORAGE_SETTINGS, encoding='utf-8') as handle:
+            value = json.loads(handle.read(8193)[:8192])
+    except (OSError, ValueError):
+        return {'name': None, 'peers': []}
+    if not isinstance(value, dict):
+        return {'name': None, 'peers': []}
+    name = value.get('name')
+    peers = [
+        {'name': peer['name'], 'url': peer['url']}
+        for peer in (value.get('peers') if isinstance(value.get('peers'), list) else [])[:4]
+        if isinstance(peer, dict)
+        and isinstance(peer.get('name'), str)
+        and DRIVE_NAME.fullmatch(peer['name'])
+        and isinstance(peer.get('url'), str)
+        and PEER_URL.fullmatch(peer['url'])
+    ]
+    return {
+        'name': name if isinstance(name, str) and DRIVE_NAME.fullmatch(name) else None,
+        'peers': peers,
+    }
+
+
+def samba_shares():
+    """(shares as (name, path), home address or None) from the installed Samba configuration."""
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        with open(SAMBA_CONFIG, encoding='utf-8') as handle:
+            parser.read_string(handle.read(65_536))
+    except (OSError, ValueError, configparser.Error):
+        return None, None
+    shares = [
+        (name, parser[name]['path'])
+        for name in parser.sections()
+        if name.lower() not in ('global', 'homes', 'printers', 'print$')
+        and SHARE_NAME.fullmatch(name)
+        and parser[name].get('path', '').startswith(STORAGE_MOUNT)
+    ][:8]
+    home = None
+    for item in parser['global'].get('interfaces', '').split() if 'global' in parser else []:
+        try:
+            address = ipaddress.ip_interface(item).ip
+        except ValueError:
+            continue
+        if address.version == 4 and address.is_private and not address.is_loopback:
+            home = str(address)
+    return shares, home
+
+
+def tailscale_address():
+    try:
+        result = subprocess.run(
+            ['tailscale', 'ip', '-4'], capture_output=True, text=True, timeout=2, check=True
+        )
+        return str(ipaddress.IPv4Address(result.stdout.split()[0]))
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+
+
+def tv_server_name():
+    """The DLNA name TVs show, when the media server is configured and running."""
+    try:
+        with open(MINIDLNA_CONFIG, encoding='utf-8') as handle:
+            lines = handle.read(16_384).splitlines()
+        active = subprocess.run(
+            ['systemctl', 'is-active', '--quiet', 'minidlna'], timeout=2, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    names = [line.partition('=')[2].strip() for line in lines if line.startswith('friendly_name=')]
+    if active.returncode != 0:
+        return None
+    return names[-1][:60] if names and names[-1] else 'Media server'
+
+
+HOST_MOUNTS = '/proc/1/mountinfo'
+
+
+def host_read_only():
+    """Whether the host mounted the volume read-only, or None if unknown.
+
+    The panel's own sandbox sees /srv read-only, so its statvfs cannot answer this.
+    """
+    try:
+        with open(HOST_MOUNTS, encoding='utf-8') as handle:
+            lines = handle.read(1_048_576).splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        fields = line.split(' ')
+        if len(fields) > 6 and fields[4] == STORAGE_MOUNT and ' - ' in line:
+            super_options = line.rsplit(' - ', 1)[1].split(' ')[-1]
+            options = set(fields[5].split(',')) | set(super_options.split(','))
+            return 'ro' in options
+    return None
+
+
+def mounted_volume():
+    """Label, filesystem and read-only state of the managed volume, or None when unmounted."""
+    if not os.path.ismount(STORAGE_MOUNT):
+        return None
+    try:
+        usage = shutil.disk_usage(STORAGE_MOUNT)
+    except OSError:
+        return None
+    label = filesystem = None
+    try:
+        result = subprocess.run(
+            ['findmnt', '--json', '--output', 'LABEL,FSTYPE', '--mountpoint', STORAGE_MOUNT],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+        found = json.loads(result.stdout)['filesystems'][0]
+        label, filesystem = found.get('label'), found.get('fstype')
+    except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError):
+        pass
+    return {
+        'total': usage.total,
+        'free': usage.free,
+        'label': label,
+        'filesystem': filesystem,
+        'readOnly': host_read_only(),
+    }
+
+
+def drive_card(name, subtitle, volume=None, actions=''):
+    if volume:
+        used = volume['total'] - volume['free']
+        percent = round(100 * used / volume['total']) if volume['total'] else 0
+        facts = ' · '.join(
+            filter(
+                None,
+                [
+                    volume['label'],
+                    volume['filesystem'],
+                    {True: 'Read-only', False: 'Read and write'}.get(volume['readOnly']),
+                ],
+            )
+        )
+        gauge = (
+            f'<meter min="0" max="100" value="{percent}" aria-label="{percent}% used"></meter>'
+            f'<p class="drive-space"><span><b>{e(size(volume["free"]))}</b> free of '
+            f'{e(size(volume["total"]))}</span><small>{e(facts)}</small></p>'
+        )
+    else:
+        gauge = ''
+    return (
+        f'<article class="drive"><p class="drive-kind">{e(subtitle)}</p>'
+        f'<h2>{e(name)}</h2>{gauge}<p class="drive-actions">{actions}</p></article>'
+    )
+
+
+def connection_rows(shares, home, tailnet_address):
+    first = shares[0][0] if shares else None
+    if not first:
+        return row(None, 'Network sharing is not set up on this Pi')
+    hostname = socket.gethostname().split('.')[0]
+    local = f'{hostname}.local'
+    rows = []
+
+    def address_row(platform, address, note):
+        return (
+            f'<li><i class="dot ok"></i><span class="grow">{e(platform)}'
+            f'<code>{e(address)}</code></span><small>{e(note)}</small></li>'
+        )
+
+    if home:
+        rows.append(address_row('Mac at home', f'smb://{local}/{first}', 'Finder → Go → Connect'))
+        rows.append(address_row('Windows at home', f'\\\\{local}\\{first}', 'File Explorer'))
+        rows.append(address_row('Any device at home', f'smb://{home}/{first}', 'Home Wi-Fi'))
+    if tailnet_address:
+        rows.append(
+            address_row(
+                'Anywhere with Tailscale',
+                f'smb://{tailnet_address}/{first}',
+                'iPhone Files → Connect to Server',
+            )
+        )
+    return ''.join(rows)
+
+
+def storage_destination_rows(mounted, show_automation, shares):
+    destinations = [(name, path) for name, path in shares or []]
     if show_automation:
-        destinations.append(('n8n data', 'n8n'))
+        destinations.append(('n8n data', os.path.join(STORAGE_MOUNT, 'n8n')))
 
     rows = []
-    for name, directory in destinations:
-        path = os.path.join(STORAGE_MOUNT, directory)
+    for name, path in destinations:
         ready = None
         status = 'Volume not mounted'
         if mounted:
@@ -1444,33 +1638,72 @@ def storage_destination_rows(mounted, show_automation):
             except OSError:
                 status = 'Folder status unavailable'
         rows.append(row(ready, name, f'{path} · {status}'))
-    return ''.join(rows)
+    return ''.join(rows) or row(None, 'No shared folders configured')
 
 
 def render_storage(*, show_automation=True):
-    mounted = os.path.ismount(STORAGE_MOUNT)
-    if mounted:
-        try:
-            usage = shutil.disk_usage(STORAGE_MOUNT)
-            share = row(True, 'Mounted', f'{size(usage.free)} free of {size(usage.total)}')
-        except OSError:
-            share = row(None, 'Capacity unavailable')
-    else:
-        share = row(None, 'Volume not mounted')
+    settings = storage_settings()
+    volume = mounted_volume()
+    shares, home = samba_shares()
+    tailnet_address = tailscale_address() if shares else None
+    first = shares[0][0] if shares else None
+    open_link = (
+        f'<a href="smb://{e(tailnet_address or home)}/{e(first)}">Open in Files or Finder</a>'
+        if first and (tailnet_address or home)
+        else ''
+    )
+    mine = drive_card(
+        settings['name'] or (volume or {}).get('label') or 'My drive',
+        'This LEÓN Home' if volume else 'This LEÓN Home · drive not connected',
+        volume,
+        ('<a class="primary" href="/storage/files">Browse files</a>' if volume else '') + open_link,
+    )
+    peers = ''.join(
+        drive_card(
+            peer['name'],
+            'Another LEÓN Home · over Tailscale',
+            actions=f'<a href="{e(peer["url"])}">Open in Files or Finder</a>',
+        )
+        for peer in settings['peers']
+    )
+    tv = tv_server_name()
     content = (
-        panel('nas', 'Shared storage', '', f'<ul class="rows">{share}</ul>')
+        f'<section class="section drives" id="nas">{mine}{peers}</section>'
+        + panel(
+            'connect',
+            'Connect from other devices',
+            '',
+            f'<ul class="rows">{connection_rows(shares, home, tailnet_address)}</ul>'
+            + (
+                '<p class="note">Sign in with your own storage account. The household '
+                'administrator gives each person a password.</p>'
+                if shares
+                else ''
+            ),
+        )
+        + (
+            panel(
+                'tv',
+                'Watch on the TV',
+                '',
+                '<ul class="rows">'
+                + row(True, tv, 'Open the TV media app or VLC → Local network')
+                + '</ul>',
+            )
+            if tv
+            else ''
+        )
         + panel(
             'destinations',
-            'Storage destinations',
+            'Shared folders',
             '',
-            f'<ul class="rows">{storage_destination_rows(mounted, show_automation)}</ul>',
+            f'<ul class="rows">{storage_destination_rows(bool(volume), show_automation, shares)}</ul>',
         )
         + panel('usb', 'USB drives', '', f'<ul class="rows">{usb_storage_rows()}</ul>')
         + '<nav class="section links" aria-label="Storage navigation">'
-        + ('<a href="/storage/files">Browse files</a>' if mounted else '')
-        + '<a href="/storage">Refresh storage</a><a href="/">Back to Home</a></nav>'
+        '<a href="/storage">Refresh</a><a href="/">Back to Home</a></nav>'
     )
-    return page(content, None, time.time(), section='Storage')
+    return page(content, None, time.time(), section='Drives')
 
 
 # Read-only file browser over the mounted shared volume. Never falls back to the system disk.

@@ -65,3 +65,18 @@ class StorageConfigurationTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(self.render('nas_guest', '--library-path', path).returncode, 2)
+
+    def test_home_network_is_optional_and_restricted(self):
+        config = ConfigParser(interpolation=None)
+        config.read_string(self.render('nas_guest').stdout)
+        self.assertEqual(config['global']['hosts allow'], '127.0.0.1')
+        result = self.render('nas_guest', '--lan', '192.168.3.152/24')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = ConfigParser(interpolation=None)
+        config.read_string(result.stdout)
+        self.assertEqual(config['global']['interfaces'], '127.0.0.1 192.168.3.152/24')
+        self.assertEqual(config['global']['hosts allow'], '127.0.0.1 192.168.3.0/24')
+        self.assertEqual(config['global']['hosts deny'], 'ALL')
+        for lan in ('8.8.8.8/24', '10.0.0.5/8', '192.168.3.0/24', '192.168.3.152', 'eth0'):
+            with self.subTest(lan=lan):
+                self.assertEqual(self.render('nas_guest', '--lan', lan).returncode, 2)

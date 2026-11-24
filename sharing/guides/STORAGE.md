@@ -8,6 +8,23 @@ and downloads files on the mounted volume for the panel owner. It is read-only, 
 folders and symbolic links, and shows nothing when the drive is not mounted. Safari plays MP4
 and MOV videos in place; other formats download, for example to open in VLC.
 
+## Name the drive and link other homes
+
+**Drives** in the panel shows this Pi's drive, how to connect from each kind of device and
+the drives of other LEÓN Home installations you can reach. Addresses come from the installed
+Samba configuration and Tailscale. To choose the drive's name and add other homes, an
+administrator writes `/etc/leon-overview/storage.json` (root-owned, mode `0644`):
+
+```json
+{
+  "name": "Edgar's drive",
+  "peers": [{ "name": "Mau's drive", "url": "smb://100.64.0.10/Library" }]
+}
+```
+
+Use at most four peers with `smb://` addresses. Invalid entries are ignored. A peer link opens
+the other home's share in Files or Finder; its owner must grant you TCP 445 on that Pi.
+
 ## Prepare the disk
 
 1. Connect one drive and inspect it with `lsblk -f`. Confirm the filesystem, UUID, available
@@ -101,6 +118,22 @@ use formats the TV plays, such as H.264 or H.265 with AAC or AC3 audio.
    "Unsuccessful getting details" in `journalctl -u minidlna` are usually damaged or incomplete.
 5. On the TV, open the media player app or VLC → Local network and select the server.
    VLC shows embedded MKV subtitles and plays DTS audio more reliably than built-in players.
+
+## Serve computers at home without Tailscale
+
+A household computer without Tailscale can use the home address. Add the Pi's reserved
+address with its prefix, for example `--lan 192.168.1.20/24`, when generating the Samba
+configuration. Samba then also listens on that address and accepts only that home network.
+Anyone on the home Wi-Fi can attempt to sign in, so keep strong Samba passwords and never
+forward port 445 on the router.
+
+- macOS and Windows 10 or later find the Pi by its multicast DNS name, for example
+  `smb://HOSTNAME.local/Library` or `\\HOSTNAME.local\Library`.
+- To show a friendly name in the Finder sidebar, add an Avahi service file under
+  `/etc/avahi/services/` that advertises `_smb._tcp` on port 445. The generated configuration
+  keeps Samba's own announcement off so the share appears once.
+- An optional Pi-hole local DNS record, such as `disco.home.arpa`, works for devices that use
+  the Pi for DNS. Devices that use another resolver, including Tailscale DNS, will not see it.
 
 ## Verify before relying on storage
 
