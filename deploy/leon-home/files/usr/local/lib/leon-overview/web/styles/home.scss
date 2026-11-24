@@ -253,3 +253,123 @@ footer {
   font-size: 12px;
   margin-top: 28px;
 }
+
+.automation-overview {
+  padding-bottom: 24px;
+}
+.automation-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 22px 0 18px;
+
+  div {
+    padding: 0 0 0 12px;
+    border-inline-start: 1px solid color('line-strong');
+  }
+  dt {
+    color: color('ash');
+    font-size: var(--text-s);
+  }
+  dd {
+    margin: 4px 0 0;
+    font-size: var(--text-xl);
+    @include numeric;
+  }
+}
+.automation-actions,
+.automation-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.automation-action,
+.automation-filters a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid color('line-strong');
+  border-radius: 999px;
+  text-decoration: none;
+  font-size: var(--text-s);
+
+  &.primary,
+  &[aria-current='true'] {
+    background: color('bone');
+    color: color('ink');
+  }
+}
+.automation-filters {
+  margin-bottom: 8px;
+}
+.automation-list .head-link {
+  min-height: 44px;
+}
+.automation-setup summary {
+  min-height: 44px;
+  padding-block: 10px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.automation-form {
+  display: grid;
+  gap: 8px;
+  max-width: 440px;
+  margin-top: 16px;
+
+  label {
+    color: color('ash');
+    font-size: var(--text-s);
+  }
+  input,
+  button {
+    margin-bottom: 8px;
+  }
+  button {
+    justify-self: start;
+  }
+}
+
+.home-shortcuts {
+  margin-top: 14px;
+}
+.automation-list .rows small,
+#executions .rows small {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: end;
+}
+
+// Files: full-width search, wrapping names (movie titles are long), details below the name
+form[role='search'] input {
+  width: 100%;
+}
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 0;
+  color: color('ash');
+
+  a {
+    color: color('bone');
+    text-decoration: none;
+    overflow-wrap: anywhere;
+  }
+}
+#files .entry {
+  display: grid;
+  gap: 2px;
+  color: inherit;
+  text-decoration: none;
+  white-space: normal;
+
+  span {
+    overflow-wrap: anywhere;
+  }
+  small {
+    max-width: none;
+  }
+}

@@ -63,6 +63,13 @@ procedures. A previous version is not a replacement for an external backup.
 Read [updates and recovery](sharing/guides/UPDATES.md) and
 [sharing one Pi for support](sharing/guides/TAILSCALE.md).
 
+## Optional household storage
+
+A household can attach a USB drive and share selected folders over its own Tailscale
+connection, and play videos on TVs at home. Follow the [storage setup guide](sharing/guides/STORAGE.md)
+for disk mounting, local account setup and permission checks. In the panel, **Storage** shows the
+drive and **Browse files** searches and downloads its files without changing them.
+
 ## Development
 
 Use Node.js 24+, pnpm 12.15.0, Python 3.13+ and the Rust toolchain pinned in

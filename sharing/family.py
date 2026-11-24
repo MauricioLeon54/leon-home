@@ -19,6 +19,8 @@ BODY = Path(__file__).with_name('updates.html').read_text(encoding='utf-8')
 
 
 class Handler(overview.Handler):
+    storage_automation = False
+
     def setup(self):
         super().setup()
         self.connection.settimeout(10)
@@ -85,7 +87,7 @@ class Handler(overview.Handler):
 
 
 def render(data, login, nonce):
-    page = original_render(data, login, nonce).decode()
+    page = original_render(data, login, nonce, show_automation=False).decode()
     links = '<nav class="section links" aria-label="Other panels">'
     return page.replace(
         links, links + '<a href="/updates">Updates<span aria-hidden="true">›</span></a>', 1

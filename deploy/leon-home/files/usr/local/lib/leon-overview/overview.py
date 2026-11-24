@@ -17,15 +17,20 @@ import collections
 import hashlib
 import hmac
 import html
+import http.client
 import http.server
 import ipaddress
 import json
+import mimetypes
 import os
 import re
+import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -469,7 +474,10 @@ def apply_identity(devices, now):
     baseline = min(known.values(), default=None)
     protected = protected_macs()
     schedules = pause_schedules()
-    router_names = {row['address']: row['name'] for row in router_telemetry.read(now)['devices']}
+    # Older router telemetry readers may provide the address without a name.
+    router_names = {
+        row['address']: row.get('name') for row in router_telemetry.read(now)['devices']
+    }
     for device in devices:
         mac = macs.get(device['ip'])
         device['mac'] = mac
@@ -1012,11 +1020,19 @@ def router_link(devices):
     return ''
 
 
-def render(data, login, nonce):
+STORAGE_LINK = '<a href="/storage">Storage<span aria-hidden="true">›</span></a>'
+
+
+AUTOMATION_LINK = '<a href="/automation">Automation<span aria-hidden="true">›</span></a>'
+
+
+def render(data, login, nonce, *, show_automation=True):
+    panel_links = STORAGE_LINK + (AUTOMATION_LINK if show_automation else '')
     if not data:
         return page(
             '<section class="overview"><h1 class="status-line"><i class="dot idle"></i>Preparing readings…</h1>'
-            '<p class="facts">The first sample takes a few seconds.</p></section>',
+            '<p class="facts">The first sample takes a few seconds.</p></section>'
+            '<nav class="section links" aria-label="Other panels">' + panel_links + '</nav>',
             nonce,
         )
     snapshot, host, dns = data.get('snapshot') or {}, data.get('host') or {}, data.get('dns')
@@ -1050,7 +1066,15 @@ def render(data, login, nonce):
         )
         + '<p class="facts">'
         + ''.join(f'<span>{e(fact)}</span>' for fact in facts if fact)
-        + '</p></section>'
+        + '</p>'
+        + (
+            '<nav class="automation-actions home-shortcuts" aria-label="Quick access">'
+            '<a class="automation-action" href="/automation">Automation</a>'
+            '<a class="automation-action" href="/storage">Storage</a></nav>'
+            if show_automation
+            else ''
+        )
+        + '</section>'
     )
 
     internet = data.get('internet') or {}
@@ -1263,7 +1287,8 @@ def render(data, login, nonce):
 
     links = (
         '<nav class="section links" aria-label="Other panels">'
-        '<a href="/admin/">Pi-hole admin<span aria-hidden="true">›</span></a>'
+        + ('' if show_automation else STORAGE_LINK)
+        + '<a href="/admin/">Pi-hole admin<span aria-hidden="true">›</span></a>'
         + router_link(data.get('devices'))
         + '</nav>'
     )
@@ -1360,14 +1385,488 @@ def router_unlock(request):
     return status if status in UNLOCK_OUTCOMES else 'unlockFailed'
 
 
-def page(body, nonce, updated=None):
+STORAGE_MOUNT = '/srv/leon-storage'
+
+
+def usb_storage_rows():
+    try:
+        result = subprocess.run(
+            [
+                'lsblk',
+                '--json',
+                '--bytes',
+                '--output',
+                'NAME,TYPE,TRAN,MODEL,SIZE,FSTYPE,MOUNTPOINTS',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+        devices = json.loads(result.stdout)['blockdevices']
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        return row(None, 'USB inventory unavailable')
+
+    rows = []
+    for disk in devices:
+        if disk.get('type') != 'disk' or disk.get('tran') != 'usb':
+            continue
+        volumes = [disk, *disk.get('children', [])]
+        for volume in volumes:
+            mounts = [mount for mount in volume.get('mountpoints') or [] if mount]
+            if volume is disk:
+                name = (disk.get('model') or '').strip() or disk['name']
+            else:
+                name = volume['name']
+            details = [size(volume.get('size')), volume.get('fstype'), ', '.join(mounts)]
+            rows.append(row(bool(mounts) or None, name, ' · '.join(filter(None, details))))
+            if len(rows) == 24:
+                return ''.join(rows)
+    return ''.join(rows) or row(None, 'No USB storage detected')
+
+
+def storage_destination_rows(mounted, show_automation):
+    destinations = [('Library', 'library'), ('Exchange', 'exchange')]
+    if show_automation:
+        destinations.append(('n8n data', 'n8n'))
+
+    rows = []
+    for name, directory in destinations:
+        path = os.path.join(STORAGE_MOUNT, directory)
+        ready = None
+        status = 'Volume not mounted'
+        if mounted:
+            try:
+                ready = stat.S_ISDIR(os.stat(path, follow_symlinks=False).st_mode)
+                status = 'Folder present' if ready else 'Expected a directory'
+            except FileNotFoundError:
+                status = 'Folder not created'
+            except OSError:
+                status = 'Folder status unavailable'
+        rows.append(row(ready, name, f'{path} · {status}'))
+    return ''.join(rows)
+
+
+def render_storage(*, show_automation=True):
+    mounted = os.path.ismount(STORAGE_MOUNT)
+    if mounted:
+        try:
+            usage = shutil.disk_usage(STORAGE_MOUNT)
+            share = row(True, 'Mounted', f'{size(usage.free)} free of {size(usage.total)}')
+        except OSError:
+            share = row(None, 'Capacity unavailable')
+    else:
+        share = row(None, 'Volume not mounted')
+    content = (
+        panel('nas', 'Shared storage', '', f'<ul class="rows">{share}</ul>')
+        + panel(
+            'destinations',
+            'Storage destinations',
+            '',
+            f'<ul class="rows">{storage_destination_rows(mounted, show_automation)}</ul>',
+        )
+        + panel('usb', 'USB drives', '', f'<ul class="rows">{usb_storage_rows()}</ul>')
+        + '<nav class="section links" aria-label="Storage navigation">'
+        + ('<a href="/storage/files">Browse files</a>' if mounted else '')
+        + '<a href="/storage">Refresh storage</a><a href="/">Back to Home</a></nav>'
+    )
+    return page(content, None, time.time(), section='Storage')
+
+
+# Read-only file browser over the mounted shared volume. Never falls back to the system disk.
+HIDDEN_ENTRIES = frozenset(
+    {
+        '$RECYCLE.BIN',
+        'System Volume Information',
+        '$TXRAJNL.DAT',
+        'lost+found',
+    }
+)
+MAX_LISTED = 500
+SEARCH_LIMITS = {'results': 200, 'visited': 20_000, 'depth': 8, 'seconds': 3.0}
+# Types Safari can show or play in place; everything else downloads.
+INLINE_TYPES = frozenset(
+    {
+        'video/mp4',
+        'video/quicktime',
+        'video/x-m4v',
+        'audio/mpeg',
+        'audio/mp4',
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/heic',
+        'application/pdf',
+    }
+)
+RANGE = re.compile(r'bytes=(\d{0,15})-(\d{0,15})')
+CHUNK = 1 << 20
+
+
+def visible(name):
+    return not name.startswith('.') and name not in HIDDEN_ENTRIES
+
+
+def storage_path(relative):
+    """Resolve a client path inside the mounted volume, or None. Symlinks never escape it."""
+    if not os.path.ismount(STORAGE_MOUNT) or len(relative) > 1024 or '\0' in relative:
+        return None
+    parts = [part for part in relative.split('/') if part]
+    if any(part in ('.', '..') or not visible(part) for part in parts):
+        return None
+    root = os.path.realpath(STORAGE_MOUNT)
+    target = os.path.realpath(os.path.join(root, *parts))
+    if os.path.commonpath([root, target]) != root:
+        return None
+    return target, '/'.join(parts)
+
+
+def file_link(relative, *, directory):
+    query = urllib.parse.urlencode({'path': relative})
+    return f'/storage/files?{query}' if directory else f'/storage/download?{query}'
+
+
+def entry_row(relative, name, is_directory, detail):
+    href = e(file_link(relative, directory=is_directory))
+    label = f'{name}/' if is_directory else name
+    return (
+        f'<li><i class="dot {"ok" if is_directory else "idle"}"></i>'
+        f'<a class="grow entry" href="{href}"><span>{e(label)}</span>'
+        f'<small>{e(detail)}</small></a></li>'
+    )
+
+
+def directory_rows(target, relative):
+    try:
+        with os.scandir(target) as entries:
+            listed = []
+            for entry in entries:
+                if visible(entry.name) and not entry.is_symlink():
+                    listed.append(entry)
+                if len(listed) > MAX_LISTED:
+                    break
+    except OSError:
+        return row(None, 'Folder unavailable'), False
+    truncated = len(listed) > MAX_LISTED
+    rows = []
+    for entry in sorted(
+        listed[:MAX_LISTED], key=lambda item: (not item.is_dir(), item.name.casefold())
+    ):
+        child = f'{relative}/{entry.name}' if relative else entry.name
+        try:
+            info = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        is_directory = stat.S_ISDIR(info.st_mode)
+        if not is_directory and not stat.S_ISREG(info.st_mode):
+            continue
+        modified = time.strftime('%Y-%m-%d', time.localtime(info.st_mtime))
+        detail = modified if is_directory else f'{size(info.st_size)} · {modified}'
+        rows.append(entry_row(child, entry.name, is_directory, detail))
+    return ''.join(rows) or row(None, 'Empty folder'), truncated
+
+
+def search_rows(target, relative, query):
+    """Bounded case-insensitive name search below the current folder."""
+    needle = query.casefold()
+    deadline = time.monotonic() + SEARCH_LIMITS['seconds']
+    rows, visited, complete = [], 0, True
+    pending = collections.deque([(target, relative, 0)])
+    while pending:
+        folder, prefix, depth = pending.popleft()
+        try:
+            with os.scandir(folder) as entries:
+                children = [
+                    item for item in entries if visible(item.name) and not item.is_symlink()
+                ]
+        except OSError:
+            continue
+        for entry in sorted(children, key=lambda item: item.name.casefold()):
+            visited += 1
+            if (
+                len(rows) >= SEARCH_LIMITS['results']
+                or visited > SEARCH_LIMITS['visited']
+                or time.monotonic() > deadline
+            ):
+                return ''.join(rows), False
+            child = f'{prefix}/{entry.name}' if prefix else entry.name
+            try:
+                is_directory = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                continue
+            if needle in entry.name.casefold():
+                rows.append(entry_row(child, entry.name, is_directory, prefix or 'Top folder'))
+            if is_directory:
+                if depth + 1 < SEARCH_LIMITS['depth']:
+                    pending.append((entry.path, child, depth + 1))
+                else:
+                    complete = False
+    return ''.join(rows), complete
+
+
+def breadcrumbs(relative):
+    links = ['<a href="/storage/files">Drive</a>']
+    parts = relative.split('/') if relative else []
+    for index, part in enumerate(parts):
+        link = e(file_link('/'.join(parts[: index + 1]), directory=True))
+        links.append(f'<a href="{link}">{e(part)}</a>')
+    return (
+        '<nav class="section crumbs" aria-label="Folder path">'
+        + '<span aria-hidden="true">›</span>'.join(links)
+        + '</nav>'
+    )
+
+
+def render_files(relative, query=''):
+    resolved = storage_path(relative)
+    if resolved is None or not os.path.isdir(resolved[0]):
+        body = panel(
+            'files',
+            'Files',
+            '',
+            f'<ul class="rows">{row(None, "Folder unavailable or drive not mounted")}</ul>',
+        )
+        return page(body + breadcrumbs(''), None, time.time(), section='Files'), 404
+    target, relative = resolved
+    query = query.strip()[:80]
+    search = (
+        '<form class="section" method="get" action="/storage/files" role="search">'
+        f'<input type="hidden" name="path" value="{e(relative)}">'
+        f'<input type="search" name="q" value="{e(query)}" maxlength="80" '
+        'placeholder="Search this folder" aria-label="Search this folder" enterkeyhint="search">'
+        '</form>'
+    )
+    if query:
+        rows, complete = search_rows(target, relative, query)
+        title = 'Search results'
+        meta = '' if complete else 'Partial results; refine the search'
+        rows = rows or row(None, 'No matching names')
+    else:
+        rows, truncated = directory_rows(target, relative)
+        title = relative.rsplit('/', 1)[-1] if relative else 'Drive'
+        meta = f'First {MAX_LISTED} items' if truncated else ''
+    body = (
+        breadcrumbs(relative)
+        + search
+        + panel('files', title, meta, f'<ul class="rows">{rows}</ul>')
+        + '<nav class="section links" aria-label="Storage navigation">'
+        '<a href="/storage">Storage</a><a href="/">Back to Home</a></nav>'
+    )
+    return page(body, None, time.time(), section='Files'), 200
+
+
+def byte_range(header, length):
+    """(start, end) for one satisfiable range, None for the whole file, False if unsatisfiable."""
+    if not header:
+        return None
+    match = RANGE.fullmatch(header.strip())
+    if not match or not (match[1] or match[2]) or length == 0:
+        return False
+    if match[1]:
+        start = int(match[1])
+        end = min(int(match[2]), length - 1) if match[2] else length - 1
+    else:
+        start, end = max(length - int(match[2]), 0), length - 1
+    return (start, end) if start <= end and start < length else False
+
+
+N8N_PANEL_CONFIG = '/etc/leon-overview/n8n-panel.json'
+N8N_PANEL_STATE = os.path.join(os.path.dirname(STATE), 'n8n-panel.json')
+N8N_KEY = re.compile(r'[A-Za-z0-9_.-]{1,4096}')
+N8N_ID = re.compile(r'[A-Za-z0-9_-]{1,80}')
+N8N_EDITOR = re.compile(r'https://[a-z0-9-]+\.[a-z0-9-]+\.ts\.net(?::[0-9]{1,5})?/?')
+EXECUTION_STATES = {
+    'success': ('Succeeded', True),
+    'error': ('Failed', False),
+    'crashed': ('Crashed', False),
+    'running': ('Running', None),
+    'waiting': ('Waiting', None),
+    'canceled': ('Canceled', None),
+    'new': ('Queued', None),
+}
+
+
+def n8n_get(path, api_key=None):
+    connection = http.client.HTTPConnection('127.0.0.1', 5678, timeout=2)
+    try:
+        headers = {'X-N8N-API-KEY': api_key} if api_key else {}
+        connection.request('GET', path, headers=headers)
+        response = connection.getresponse()
+        if response.status != 200:
+            return None
+        raw = response.read(131_073)
+        return json.loads(raw) if len(raw) <= 131_072 else None
+    except (ValueError, OSError, http.client.HTTPException):
+        return None
+    finally:
+        connection.close()
+
+
+def n8n_panel_config():
+    config = {}
+    for path in (N8N_PANEL_CONFIG, N8N_PANEL_STATE):
+        values = json_file(path, 8192)
+        if isinstance(values, dict):
+            config.update(values)
+    return config
+
+
+def n8n_rows(response):
+    if not isinstance(response, dict) or not isinstance(response.get('data'), list):
+        return None
+    return [item for item in response['data'][:12] if isinstance(item, dict)]
+
+
+def n8n_data(config):
+    key = config.get('apiKey')
+    if not isinstance(key, str) or not N8N_KEY.fullmatch(key):
+        return None, None
+    workflows = n8n_rows(n8n_get('/api/v1/workflows?limit=12', key))
+    workflow_id = config.get('workflowId')
+    if workflows is None and isinstance(workflow_id, str) and N8N_ID.fullmatch(workflow_id):
+        workflow = n8n_get(f'/api/v1/workflows/{workflow_id}', key)
+        workflows = [{**workflow, 'id': workflow_id}] if isinstance(workflow, dict) else None
+        if workflows is not None:
+            recent = n8n_get(
+                f'/api/v1/executions?workflowId={workflow_id}&limit=12&includeData=false', key
+            )
+            return workflows, n8n_rows(recent)
+    recent = n8n_get('/api/v1/executions?limit=12&includeData=false', key)
+    return workflows, n8n_rows(recent)
+
+
+def automation_setup(config, login, *, opened=False, message=''):
+    if not login:
+        return ''
+    editor = config.get('editorUrl')
+    editor = editor if isinstance(editor, str) and N8N_EDITOR.fullmatch(editor) else ''
+    stored_key = config.get('apiKey')
+    key_required = (
+        '' if isinstance(stored_key, str) and N8N_KEY.fullmatch(stored_key) else ' required'
+    )
+    return (
+        f'<details class="section automation-setup" id="automation-settings"{" open" if opened else ""}>'
+        '<summary>Connection settings</summary>'
+        '<p class="note">Create a key in n8n under Settings → n8n API with workflow:list and '
+        'execution:list access. Use the private Tailscale address if you have enabled HTTPS for n8n.</p>'
+        + (f'<p class="note" role="status">{e(message)}</p>' if message else '')
+        + '<form class="automation-form" method="post" action="/automation/settings">'
+        f'<input type="hidden" name="t" value="{e(token(login))}">'
+        '<label for="automation-key">Read-only API key</label>'
+        f'<input id="automation-key" type="password" name="apiKey" maxlength="4096" autocomplete="off"{key_required}>'
+        '<label for="automation-url">Private editor URL</label>'
+        f'<input id="automation-url" type="text" name="editorUrl" inputmode="url" maxlength="253" value="{e(editor)}">'
+        '<button class="primary">Save connection</button></form></details>'
+    )
+
+
+def render_automation(login=None, *, failures_only=False, message=''):
+    response = n8n_get('/healthz/readiness')
+    ready = isinstance(response, dict) and response.get('status') == 'ok'
+    config = n8n_panel_config()
+    workflows, executions = n8n_data(config) if ready else (None, None)
+    editor_url = config.get('editorUrl')
+    editor_ready = isinstance(editor_url, str) and N8N_EDITOR.fullmatch(editor_url)
+    editor_link = (
+        f'<a class="automation-action primary" href="{e(editor_url)}">Open n8n editor</a>'
+        if editor_ready
+        else ''
+    )
+    headline = 'n8n is ready' if ready else 'n8n is unavailable'
+    status = 'ok' if ready else 'idle'
+    workflow_names = {}
+    workflow_items = []
+    for workflow in workflows or []:
+        workflow_id = workflow.get('id')
+        if not isinstance(workflow_id, str) or not N8N_ID.fullmatch(workflow_id):
+            continue
+        name = clean_name(workflow.get('name')) or 'Workflow'
+        workflow_names[workflow_id] = name
+        active = workflow.get('active')
+        state = (
+            {True: 'Published', False: 'Draft'}.get(active, 'Unknown')
+            if type(active) is bool
+            else 'Unknown'
+        )
+        link = (
+            f'<a class="head-link" href="{e(editor_url.rstrip("/"))}/workflow/{workflow_id}">Open</a>'
+            if editor_ready
+            else ''
+        )
+        workflow_items.append(row(active is True or None, name, state, extra=link))
+
+    execution_items = []
+    for execution in executions or []:
+        raw_status = clean_name(execution.get('status'))
+        if failures_only and raw_status not in ('error', 'crashed'):
+            continue
+        label, tone = EXECUTION_STATES.get(raw_status, ('Unknown', None))
+        execution_workflow = clean_name(execution.get('workflowId'))
+        name = workflow_names.get(execution_workflow, 'Workflow execution')
+        started = clean_name(execution.get('startedAt'))
+        time_label = re.sub(
+            r'T|Z$', lambda match: ' ' if match[0] == 'T' else ' UTC', started or ''
+        )
+        execution_items.append(row(tone, name, f'{label} · {time_label}' if started else label))
+    connected = workflows is not None or executions is not None
+    setup_link = (
+        '<a class="head-link" href="#automation-settings">Connect</a>' if not connected else ''
+    )
+    filters = ''
+    if executions is not None:
+        selected_all = '' if failures_only else ' aria-current="true"'
+        selected_failed = ' aria-current="true"' if failures_only else ''
+        filters = (
+            '<nav class="automation-filters" aria-label="Filter executions">'
+            f'<a href="/automation#executions"{selected_all}>All</a>'
+            f'<a href="/automation?status=failed#executions"{selected_failed}>Failed</a></nav>'
+        )
+    overview_html = (
+        f'<section class="overview automation-overview" id="automation-service">'
+        f'<h1 class="status-line"><i class="dot {status}"></i>{headline}</h1>'
+        '<dl class="automation-metrics">'
+        f'<div><dt>Workflows shown</dt><dd>{len(workflow_items) if workflows is not None else "—"}</dd></div>'
+        f'<div><dt>Recent runs</dt><dd>{len(executions) if executions is not None else "—"}</dd></div>'
+        '</dl><nav class="automation-actions" aria-label="Automation actions">'
+        + editor_link
+        + '<a class="automation-action" href="/automation">Refresh</a>'
+        '<a class="automation-action" href="/storage">Storage</a></nav></section>'
+    )
+    empty_workflows = 'No workflows found' if workflows is not None else 'Workflow list unavailable'
+    empty_executions = (
+        'No stored executions' if executions is not None else 'Execution history unavailable'
+    )
+    if failures_only and executions is not None:
+        empty_executions = 'No failures in recent executions'
+    runs = ''.join(execution_items) or row(None, empty_executions)
+    work = ''.join(workflow_items) or row(None, empty_workflows)
+    content = (
+        overview_html
+        + '<div class="pair">'
+        + '<section class="section automation-list" id="workflows">'
+        + section_head('Workflows', link=setup_link)
+        + f'<ul class="rows">{work}</ul></section>'
+        + panel('executions', 'Recent executions', '', filters + f'<ul class="rows">{runs}</ul>')
+        + '</div>'
+        + automation_setup(config, login, opened=not connected or bool(message), message=message)
+    )
+    return page(content, None, time.time(), section='Automation')
+
+
+def page(body, nonce, updated=None, *, section='Home'):
+    navigation = tab_bar('home' if section == 'Home' else '')
+    module = (
+        f'<script type="module" nonce="{nonce}" src="/network-map/assets/home.js"></script>'
+        if nonce
+        else ''
+    )
     stamp = (
         f'<time class="updated" datetime="{e(time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(updated)))}">'
         f'Updated {e(time.strftime("%H:%M", time.localtime(updated)))}</time>'
         if updated
         else ''
     )
-    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0e0e0e"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -1375,7 +1874,7 @@ def page(body, nonce, updated=None):
 <link rel="icon" href="/brand/symbol.png"><link rel="manifest" href="/manifest.webmanifest"><title>LEÓN Home</title><link rel="stylesheet" href="/network-map/assets/home.css"></head><body>
 <p class="connection" id="connection" role="status" hidden></p><main>
 <header><img class="symbol" src="/brand/symbol.png" alt=""><img class="word" src="/brand/wordmark.png" alt="LEÓN">
-<span class="sub">Home</span>{stamp}</header>{body}</main>{tab_bar('home')}<script type="module" nonce="{nonce}" src="/network-map/assets/home.js"></script></body></html>'''.encode(
+<span class="sub">{e(section)}</span>{stamp}</header>{body}</main>{navigation}{module}</body></html>""".encode(
         'utf-8'
     )
 
@@ -1384,6 +1883,8 @@ def page(body, nonce, updated=None):
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    storage_automation = True
+
     server_version = 'leon-overview'
     sys_version = ''
 
@@ -1396,6 +1897,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not login:
             return self.reply(403, b'Forbidden', 'text/plain; charset=utf-8')
         path = self.path.split('?', 1)[0]
+        if path == '/automation' and self.storage_automation:
+            query = (
+                urllib.parse.parse_qs(self.path.partition('?')[2], max_num_fields=10)
+                if len(self.path) <= 256 and self.path.count('&') < 10
+                else {}
+            )
+            return self.reply(
+                200,
+                render_automation(login, failures_only=query.get('status') == ['failed']),
+                'text/html; charset=utf-8',
+            )
+        if path in ('/storage/files', '/storage/download'):
+            query = (
+                urllib.parse.parse_qs(self.path.partition('?')[2], max_num_fields=2)
+                if len(self.path) <= 4096
+                else {}
+            )
+            relative = (query.get('path') or [''])[0]
+            if path == '/storage/download':
+                return self.download(relative)
+            body, status = render_files(relative, (query.get('q') or [''])[0])
+            return self.reply(status, body, 'text/html; charset=utf-8')
+        if path == '/storage':
+            return self.reply(
+                200,
+                render_storage(show_automation=self.storage_automation),
+                'text/html; charset=utf-8',
+            )
         if path == '/manifest.webmanifest':
             return self.reply(
                 200, MANIFEST, 'application/manifest+json', cache='public, max-age=3600'
@@ -1463,6 +1992,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply(403, b'Forbidden', 'text/plain; charset=utf-8')
         if self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin'):
             return self.reply(403, b'Cross-site request refused', 'text/plain; charset=utf-8')
+        if self.path == '/automation/settings' and self.storage_automation:
+            return self.automation_settings(login)
         length = int(self.headers.get('Content-Length') or 0)
         if length > 2048:
             return self.reply(413, b'Too large', 'text/plain; charset=utf-8')
@@ -1495,6 +2026,64 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Location', '/')
         self.send_header('Content-Length', '0')
         self.end_headers()
+
+    def automation_settings(self, login):
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+            if (
+                not 1 <= length <= 8192
+                or self.headers.get('Transfer-Encoding')
+                or self.headers.get('Content-Type', '').split(';', 1)[0]
+                != 'application/x-www-form-urlencoded'
+            ):
+                raise ValueError
+            form = urllib.parse.parse_qs(
+                self.rfile.read(length).decode(), keep_blank_values=True, max_num_fields=3
+            )
+            if set(form) != {'t', 'apiKey', 'editorUrl'} or any(len(v) != 1 for v in form.values()):
+                raise ValueError
+        except (ValueError, UnicodeError):
+            return self.reply(400, b'Invalid connection settings', 'text/plain')
+        if not token_valid(login, form['t'][0]):
+            return self.reply(403, b'Expired form. Reload the page.', 'text/plain')
+
+        config = n8n_panel_config()
+        key = form['apiKey'][0].strip() or config.get('apiKey')
+        editor = form['editorUrl'][0].strip()
+        if not isinstance(key, str) or not N8N_KEY.fullmatch(key):
+            message = 'Enter an n8n API key.'
+        elif editor and (len(editor) > 253 or not N8N_EDITOR.fullmatch(editor)):
+            message = 'Use the HTTPS address ending in ts.net for the editor.'
+        elif (
+            n8n_rows(n8n_get('/api/v1/workflows?limit=1', key)) is None
+            or n8n_rows(n8n_get('/api/v1/executions?limit=1&includeData=false', key)) is None
+        ):
+            message = 'Check that n8n is running and the key can list workflows and executions.'
+        else:
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode='w', dir=os.path.dirname(N8N_PANEL_STATE), delete=False
+                ) as draft:
+                    try:
+                        json.dump({'apiKey': key, 'editorUrl': editor}, draft)
+                        draft.flush()
+                        os.fsync(draft.fileno())
+                        os.replace(draft.name, N8N_PANEL_STATE)
+                    finally:
+                        if os.path.exists(draft.name):
+                            os.unlink(draft.name)
+            except OSError:
+                message = 'Could not save the connection on this Pi.'
+            else:
+                self.send_response(303)
+                self.send_header('Location', '/automation')
+                self.send_header('Content-Length', '0')
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                return
+        return self.reply(
+            400, render_automation(login, message=message), 'text/html; charset=utf-8'
+        )
 
     def port(self, login, length):
         # JSON plus a custom header cannot be sent cross-site without CORS preflight, which
@@ -1686,6 +2275,60 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Referrer-Policy', 'no-referrer')
         self.end_headers()
         self.wfile.write(body)
+
+    def download(self, relative):
+        resolved = storage_path(relative)
+        try:
+            if resolved is None:
+                raise FileNotFoundError(relative)
+            handle = open(resolved[0], 'rb')  # noqa: SIM115  (closed below)
+        except OSError:
+            return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
+        with handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
+            length = info.st_size
+            selected = byte_range(self.headers.get('Range'), length)
+            if selected is False:
+                self.send_response(416)
+                self.send_header('Content-Range', f'bytes */{length}')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return None
+            start, end = selected or (0, length - 1)
+            name = os.path.basename(resolved[0])
+            content_type = mimetypes.guess_type(name)[0] or 'application/octet-stream'
+            disposition = 'inline' if content_type in INLINE_TYPES else 'attachment'
+            if disposition == 'attachment':
+                content_type = 'application/octet-stream'
+            self.send_response(206 if selected else 200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(max(end - start + 1, 0)))
+            self.send_header('Accept-Ranges', 'bytes')
+            if selected:
+                self.send_header('Content-Range', f'bytes {start}-{end}/{length}')
+            self.send_header(
+                'Content-Disposition',
+                f"{disposition}; filename*=UTF-8''{urllib.parse.quote(name)}",
+            )
+            self.send_header('Cache-Control', 'private, no-store')
+            self.send_header('Content-Security-Policy', "default-src 'none'; sandbox")
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Referrer-Policy', 'no-referrer')
+            self.end_headers()
+            handle.seek(start)
+            remaining = end - start + 1
+            try:
+                while remaining > 0:
+                    chunk = handle.read(min(CHUNK, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError, TimeoutError):
+                self.close_connection = True  # the player stopped or seeked; normal for video
+        return None
 
     def log_message(self, fmt, *args):
         pass  # no access log: request paths and logins stay out of the journal

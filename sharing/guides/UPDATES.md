@@ -18,6 +18,11 @@ A **maintenance update** needs assistance. The privileged signature verifier, op
 Pi-hole and Tailscale are maintained separately from normal panel updates. Changing the signing
 key or supported operating system also requires an explicit administrative maintenance step.
 
+Release 0.3.6 adds **Storage** to Home: USB drives, mount status, free space and a read-only
+**Browse files** view of the shared drive with search, downloads and in-place playback of MP4
+videos. It is a normal application update. Setting up the drive itself stays an optional
+administrator step described in the [storage guide](STORAGE.md).
+
 ## Perform a maintenance update
 
 Release 0.3.5 adds weekly cleanup of obsolete downloaded APT package archives using the
@@ -103,13 +108,13 @@ swiftc sharing/sign_release.swift -o .build/LeonReleaseSigner
 pnpm check
 pnpm build:netmap
 python3 sharing/build_release.py \
-  --version 0.3.5 --sequence 9 \
+  --version 0.3.6 --sequence 10 \
   --notes 'Describe the actual improvement for the person using the panel.' \
-  --output dist/leon-home/0.3.5 \
+  --output dist/leon-home/0.3.6 \
   --signer .build/LeonReleaseSigner
 ```
 
-These version numbers identify the 0.3.5 release. Increase both values for every later release.
+These version numbers identify the 0.3.6 release. Increase both values for every later release.
 The output directory must be new; the builder refuses to overwrite it. Publish its five files
 only after verifying tests, signatures and correspondence with reviewed source. If the Keychain
 is locked, unlock it and use the original key rather than initializing a replacement.
