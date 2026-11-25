@@ -59,7 +59,7 @@ interface ActionRequests extends HardwareActions, NetworkActions {
   '/api/v1/dns/pause': { seconds: 300 | 1800 };
   '/api/v1/dns/resume': Record<string, never>;
 }
-async function postJson(path: string, body: unknown, token: string): Promise<{ httpStatus: number; ok: boolean; outcome: string; message: string; data: Record<string, unknown> }> {
+async function send(path: string, body: unknown, token: string): Promise<{ httpStatus: number; ok: boolean; outcome: string; message: string; data: Record<string, unknown> }> {
   const controller = new AbortController(),
     timeout = setTimeout(() => controller.abort(), 60000);
   try {
@@ -87,6 +87,26 @@ async function postJson(path: string, body: unknown, token: string): Promise<{ h
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** A new action token, or null when the panel does not give one. */
+async function renewToken(): Promise<string | null> {
+  try {
+    const response = await fetch(apiUrl('/api/v1/session'), { cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(8000) });
+    return response.ok ? string(record(await readJson(response, 8192)).actionToken, 200) : null;
+  } catch {
+    return null;
+  }
+}
+/**
+ * Every action. The panel forgets its tokens when it restarts (an update), so an app left open holds a
+ * dead one. 403 means the request was refused before anything ran: one retry with a new token is safe.
+ */
+async function postJson(path: string, body: unknown, token: string): ReturnType<typeof send> {
+  const first = await send(path, body, token);
+  if (first.httpStatus !== 403) return first;
+  const renewed = await renewToken();
+  return renewed === null || renewed === token ? first : send(path, body, renewed);
 }
 
 export type ActionResult = Awaited<ReturnType<typeof postJson>>;

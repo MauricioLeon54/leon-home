@@ -131,6 +131,10 @@ APP_ROUTES = frozenset(
     }
 )
 TOKEN_SECONDS = 3600
+# Optional, administrator-written: the ISP modem's private IPv4 address on one line.
+MODEM_ADDRESS = '/etc/leon-overview/modem'
+MODEM_LINE = '/var/lib/leon-router/modem.json'  # written by the router monitor
+SPEED_TESTS = '/var/lib/leon-speedtest/history.json'  # optional; leon-speedtest.timer
 SECRET = os.urandom(32)
 VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'VERSION')
 VERSION = re.compile(r'[A-Za-z0-9][A-Za-z0-9 .+-]{0,39}')
@@ -397,6 +401,16 @@ def local_name(ip):
     return label
 
 
+def modem_reading():
+    """Ping loss and response time of the owner's modem; None when it is not configured. No login."""
+    try:
+        with open(MODEM_ADDRESS, encoding='utf-8') as handle:
+            address = collector.private_ipv4(handle.read(64).strip())
+        return {'at': int(time.time()), **collector.ping(address, 4)}
+    except (OSError, ValueError):
+        return None
+
+
 def sample():
     snapshot = collector.collect()
     network = snapshot.get('network') or {}
@@ -427,6 +441,7 @@ def sample():
         'tabletPeer': tablet_peer(),
         'tabletSummary': tablet_summary(),
         'internet': internet,
+        'modem': modem_reading(),
         'devices': devices,
         'backups': backups(),
         'repos': repositories(),
@@ -628,6 +643,11 @@ def record_internet(data):
             except OSError:
                 pass
     data['internetHealth'] = internet_health.summary(list(_internet), time.time())
+    data['internetHealth']['speedTests'] = internet_health.load_speed_tests(
+        SPEED_TESTS, time.time()
+    )
+    data['internetHealth']['modem'] = data.get('modem')
+    data['internetHealth']['modemLine'] = internet_health.load_modem_line(MODEM_LINE, time.time())
     try:
         internet_health.save_closed_outages(INTERNET_OUTAGES, data['internetHealth'])
     except OSError:

@@ -22,13 +22,29 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from router_read_probe import ProbeError, Router
 
+try:
+    import modem_read_probe  # optional: only where the vault also has the ISP modem
+except ImportError:
+    modem_read_probe = None
+
 STATE = Path('/var/lib/leon-router/telemetry.json')
+MODEM_SHAPE = Path('/var/lib/leon-router/modem-shape.json')
+MODEM_LINE = Path('/var/lib/leon-router/modem.json')
+MODEM_HISTORY = 120  # a month of readings every six hours
+# After a refusal the modem is left alone, across restarts, until the owner unlocks from the phone.
+MODEM_REFUSED = Path('/var/lib/leon-router/modem-refused')
 # Ciphertext copy of the owner's age vault (owner choice 2026-11-16); decrypted only in memory.
 # The unit may move it; the independent edition keeps it in the monitor's own state directory.
 VAULT = Path(os.environ.get('ROUTER_VAULT', '/etc/leon-router/network-devices.age'))
 # '1' lets the phone create the vault once (router password + new phrase); never replaces one.
 PHONE_SETUP = os.environ.get('ROUTER_PHONE_SETUP') == '1'
 MIN_SETUP_PHRASE_BYTES = 12
+# Owner opt-in 2026-11-25 (`provision.sh router-auto-unlock on`): while this key exists, the device
+# entries of the last phone unlock are kept encrypted to it, never the vault phrase.
+AUTO_KEY = Path('/etc/leon-router/auto-unlock.key')
+AUTO_ENTRIES = Path('/var/lib/leon-router/auto-unlock.age')
+AUTO_RETRY_SECONDS = (60, 900)  # first and longest wait after a failure that tested no password
+MODEM_INTERVAL_SECONDS = 6 * 3600
 AGE = '/usr/bin/age'
 VAULT_TIMEOUT_SECONDS = 30  # scrypt (log2 N = 18) takes a few seconds on a Pi 4; bounds a stuck age
 UNLOCK_SOCKET = '/run/leon-router/unlock.sock'
@@ -566,6 +582,7 @@ def receive(connection, uid):
     """Owner/root send the router entry over SSH. The overview (phone unlock) may send only the
     vault phrase; the router entry then comes from the Pi's ciphertext copy of the vault. With
     phone setup enabled it may instead send the router password and a new phrase once."""
+    modem = None
     if uid is not None and uid in (0, OWNER_UID):
         device = read_request(connection, 32768)
     elif uid is not None and uid == OVERVIEW_UID:
@@ -588,8 +605,16 @@ def receive(connection, uid):
         document = decrypt_vault(request['phrase'])
         devices = document.get('devices') if isinstance(document, dict) else None
         device = devices.get('router') if isinstance(devices, dict) else None
+        modem = devices.get('modem') if isinstance(devices, dict) else None
     else:
         raise ProbeError('unauthorizedOwner')
+    router = open_session(device)
+    if uid == OVERVIEW_UID:
+        router.entries = {'router': device, 'modem': modem}  # main() takes them once
+    return router
+
+
+def open_session(device):
     if (
         not isinstance(device, dict)
         or set(device) != {'origin', 'username', 'password'}
@@ -601,6 +626,120 @@ def receive(connection, uid):
     router = PortRouter(device['origin'])
     router.login(device['username'] or 'admin', device['password'])
     return router
+
+
+def remember(entries):
+    """Keep the entries for automatic unlock, only while the owner's key exists."""
+    if not AUTO_KEY.is_file():
+        return
+    temporary = AUTO_ENTRIES.with_suffix('.new')
+    try:
+        result = subprocess.run(
+            [AGE, '--encrypt', '--identity', str(AUTO_KEY)],
+            input=json.dumps(entries).encode(),
+            capture_output=True,
+            timeout=15,
+            check=True,
+        )
+        with open(temporary, 'wb') as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(result.stdout)
+        temporary.replace(AUTO_ENTRIES)
+        outcome = 'saved'
+    except (OSError, subprocess.SubprocessError) as error:
+        outcome = type(error).__name__  # never the arguments or output
+    print(f'automatic unlock {outcome}', file=sys.stderr, flush=True)
+
+
+def remembered():
+    """The saved entries, or None when automatic unlock is off or nothing was saved yet."""
+    if not AUTO_KEY.is_file() or not AUTO_ENTRIES.is_file():
+        return None
+    try:
+        result = subprocess.run(
+            [AGE, '--decrypt', '--identity', str(AUTO_KEY), str(AUTO_ENTRIES)],
+            capture_output=True,
+            timeout=15,
+            check=True,
+        )
+        entries = json.loads(result.stdout[:32769])
+        return entries if isinstance(entries, dict) else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+class AutoUnlock:
+    """Opens the router session from the saved entries. A rejected password stops it until the next
+    phone unlock or restart, so a changed password can never lock the router by repetition."""
+
+    def __init__(self):
+        self.next_at = 0
+        self.wait = AUTO_RETRY_SECONDS[0]
+        self.is_stopped = False
+
+    def reset(self):
+        self.__init__()
+
+    def attempt(self, now):
+        if self.is_stopped or now < self.next_at:
+            return None
+        self.next_at = now + self.wait
+        entries = remembered()
+        if entries is None:
+            return None  # off or not saved; looked at again later, no login is made
+        try:
+            router = open_session(entries.get('router'))
+            router.entries = entries
+            self.reset()
+            outcome = 'opened'
+        except ProbeError as error:
+            router, outcome = None, str(error)
+            if outcome == 'invalidSession':
+                self.wait = min(self.wait * 2, AUTO_RETRY_SECONDS[1])  # login page not ready yet
+            else:
+                self.is_stopped = True  # the password may have been tested: never repeat it
+        except FAILURES as error:
+            router, outcome = None, type(error).__name__  # unreachable router: try again later
+            self.wait = min(self.wait * 2, AUTO_RETRY_SECONDS[1])
+        print(f'automatic unlock {outcome}', file=sys.stderr, flush=True)
+        return router
+
+
+def write_json(path, value):
+    temporary = path.with_suffix('.new')
+    with open(temporary, 'w', encoding='utf-8') as handle:
+        os.fchmod(handle.fileno(), 0o640)
+        json.dump(value, handle)
+    temporary.replace(path)
+
+
+def read_modem(device, is_owner_present):
+    """One modem login with the vault's own entry, right after an owner unlock: never retried and the
+    credentials are not kept. Saves only the probe's redacted report."""
+    if modem_read_probe is None or not isinstance(device, dict):
+        return
+    if is_owner_present:
+        MODEM_REFUSED.unlink(missing_ok=True)
+    elif MODEM_REFUSED.exists():
+        return
+    try:
+        report = modem_read_probe.probe(device['origin'], device['username'], device['password'])
+        report['observedAt'] = int(time.time())
+        write_json(MODEM_SHAPE, report)
+        line = {'at': report['observedAt'], **modem_read_probe.line_summary(report)}
+        try:
+            history = json.loads(MODEM_LINE.read_text(encoding='utf-8'))['history']
+        except (OSError, ValueError, KeyError, TypeError):
+            history = []
+        history = [*history, [line['at'], line['rxDbm']]] if isinstance(history, list) else []
+        write_json(MODEM_LINE, {**line, 'history': history[-MODEM_HISTORY:]})
+        outcome = 'read' if report['loggedOut'] else 'read, logout not confirmed'
+    except ProbeError as error:
+        outcome = str(error)
+        MODEM_REFUSED.touch(mode=0o600)
+    except FAILURES as error:
+        outcome = type(error).__name__
+    print(f'modem outcome={outcome}', file=sys.stderr, flush=True)
 
 
 def parse_action(value):
@@ -857,6 +996,7 @@ def main():
     # Baseline at start, independent of the session: a window that opens while locked is applied on unlock.
     schedule_last = schedule_actions(load_schedules(), {}, *local_week_minute())[0]
     last_action = 0
+    auto, next_modem = AutoUnlock(), 0
     while True:
         ready, _, _ = select.select([unlock, control], [], [], 1)
         if unlock in ready:
@@ -900,6 +1040,14 @@ def main():
                     connection.sendall(json.dumps({'status': status}).encode())
                 except OSError:
                     pass  # the requester may have closed its bounded unlock request
+            entries = getattr(router, 'entries', None)
+            if entries is not None:
+                router.entries = None
+                remember(entries)
+                auto.reset()
+                read_modem(entries.get('modem'), is_owner_present=True)
+                next_modem = time.monotonic() + MODEM_INTERVAL_SECONDS
+                entries = None
         if control in ready:
             connection, _ = control.accept()
             with connection:
@@ -938,6 +1086,17 @@ def main():
                         connection.sendall(b'{"status":"invalid"}')
                     except OSError:
                         pass
+        if router is None:
+            candidate = auto.attempt(time.monotonic())
+            if candidate is not None:
+                candidate.entries = None  # already saved; not kept in memory
+                router, state, poll_failures = poll(candidate, state, history, 0)
+                save(state)
+                next_poll = time.monotonic() + POLL_SECONDS
+        if router is not None and time.monotonic() >= next_modem:
+            # With automatic unlock the modem is read every few hours; without it, once per unlock.
+            next_modem = time.monotonic() + MODEM_INTERVAL_SECONDS
+            read_modem((remembered() or {}).get('modem'), is_owner_present=False)
         if router is not None and time.monotonic() >= next_poll:
             router, state, poll_failures = poll(router, state, history, poll_failures)
             if (

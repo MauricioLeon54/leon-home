@@ -92,7 +92,32 @@ function snapshot(overrides = {}) {
       },
       wifi: { networks: [] },
     },
-    internet: { availability: 100, samples: 1, current: { at: now, state: 'up', internetMs: 15, routerMs: 1 }, series: [[now, 15]], outages: [] },
+    internet: {
+      availability: 100,
+      samples: 1,
+      current: { at: now, state: 'up', internetMs: 15, routerMs: 1 },
+      series: [[now, 15]],
+      outages: [],
+      modem: { at: now, lossPercent: 0, averageMs: 1.37 },
+      modemLine: {
+        at: now - 60,
+        isRegistered: true,
+        rxDbm: -21.19,
+        txDbm: 2.29,
+        temperatureCelsius: 44,
+        cpuPercent: 11,
+        memoryPercent: 34,
+        ports: [
+          { port: 1, isUp: true, speedMbps: 2500 },
+          { port: 2, isUp: false, speedMbps: null },
+        ],
+        rxHistory: [-21.4, -21.2],
+      },
+      speedTests: [
+        { at: now - 86_400, downMbps: 290, upMbps: 200 },
+        { at: now - 60, downMbps: 283.4, upMbps: null },
+      ],
+    },
     ...overrides,
   };
 }
@@ -103,7 +128,7 @@ async function start(browserType, { data = () => snapshot(), answer = () => ({ s
   const page = await context.newPage();
   const errors = [],
     posts = [],
-    state = { responses: 0, data };
+    state = { responses: 0, data, token: session.actionToken };
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => {
     if (message.type() === 'error' && !message.text().includes('Failed to load resource')) errors.push(message.text());
@@ -113,13 +138,14 @@ async function start(browserType, { data = () => snapshot(), answer = () => ({ s
     const request = route.request(),
       { pathname } = new URL(request.url());
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
-    if (pathname === '/leon/v1/session') return json(session);
+    if (pathname === '/leon/v1/session') return json({ ...session, actionToken: state.token });
     if (pathname === '/leon/v1/network' && request.method() === 'GET') {
       const reply = state.data(++state.responses);
       return reply === null ? route.fulfill({ status: 503, body: 'Unavailable' }) : json(reply);
     }
     if (pathname.startsWith('/leon/v1/network/')) {
       posts.push({ path: pathname, token: request.headers()['x-leon-token'], body: request.postDataJSON() });
+      if (request.headers()['x-leon-token'] !== state.token) return json({ status: 'forbidden' }, 403);
       return json(answer(pathname));
     }
     if (pathname.startsWith('/assets/')) {
@@ -134,6 +160,7 @@ async function start(browserType, { data = () => snapshot(), answer = () => ({ s
     page,
     errors,
     posts,
+    state,
     async close() {
       await context.close();
       await browser.close();
@@ -169,6 +196,16 @@ for (const browserType of [chromium, webkit]) {
       await app.page.getByText('Right now').waitFor();
       assert.equal(url(app.page).search, '?view=traffic');
       assert.equal(await app.page.locator('.traffic-row').count(), 2);
+      const modem = app.page.locator('.group', { has: app.page.getByRole('heading', { name: 'Modem', exact: true }) });
+      assert.equal(await modem.locator('.reading', { hasText: 'Response' }).locator('.reading-value').textContent(), '1.4 ms');
+      const fiber = app.page.locator('.group', { has: app.page.getByRole('heading', { name: 'Fiber', exact: true }) });
+      assert.equal(await fiber.locator('.reading', { hasText: 'Fiber signal' }).locator('.reading-value').textContent(), '-21.2 dBm');
+      assert.equal(await fiber.locator('.row', { hasText: 'Modem port 1' }).locator('.row-value').textContent(), '2.5 Gbps');
+      assert.equal(await fiber.getByText('The fiber signal is normal.').count(), 1);
+      const speed = app.page.locator('.group', { hasText: 'Speed test' });
+      assert.equal(await speed.locator('.reading', { hasText: 'Download' }).locator('.reading-value').textContent(), '283 Mbps');
+      assert.equal(await speed.locator('.reading', { hasText: 'Upload' }).locator('.reading-value').textContent(), '—');
+      assert.equal(await speed.getByText('Part of the last test could not finish.').count(), 1);
       await app.page.getByRole('radio', { name: 'Ports' }).click();
       await app.page.getByText('Ethernet ports').waitFor();
       assert.equal(url(app.page).search, '?view=ports');
@@ -287,6 +324,26 @@ for (const browserType of [chromium, webkit]) {
       await app.page.locator('.sheet').getByRole('button', { name: 'Disable' }).click();
       await app.page.locator('.sheet').waitFor({ state: 'detached' });
       assert.deepEqual(app.posts, [{ path: '/leon/v1/network/port', token: 'token-fixture', body: { port: 1, enabled: false } }]);
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test(`${browserType.name()} an action refused after the panel restarted is retried once with a new token`, async () => {
+    const locked = snapshot({ routerTelemetry: { ...snapshot().routerTelemetry, status: 'locked', ports: null } });
+    const app = await start(browserType, { data: () => locked, answer: () => ({ status: 'current' }) });
+    try {
+      await app.page.goto('https://leon.test/network');
+      await app.page.locator('.unlock').waitFor();
+      app.state.token = 'token-after-restart';
+      await app.page.getByLabel('LEÓN vault passphrase', { exact: true }).fill('correct horse battery');
+      await app.page.getByRole('button', { name: 'Unlock' }).click();
+      await app.page.getByText('Ready. The router session is active.').waitFor();
+      assert.deepEqual(
+        app.posts.map(post => post.token),
+        ['token-fixture', 'token-after-restart']
+      );
       assert.deepEqual(app.errors, []);
     } finally {
       await app.close();

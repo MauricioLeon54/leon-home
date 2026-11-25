@@ -153,6 +153,79 @@ def load(path, now):
     ][-MAX_SAMPLES:]
 
 
+MAX_SPEED_TESTS = 30
+
+
+def load_speed_tests(path, now):
+    """Recent daily results, oldest first: {at, downMbps, upMbps}; null means that part failed."""
+    try:
+        with open(path, encoding='utf-8') as handle:
+            rows = json.loads(handle.read(100_000))
+    except (OSError, ValueError):
+        return []
+
+    def valid(row):
+        return (
+            isinstance(row, dict)
+            and type(row.get('at')) is int
+            and 0 < row['at'] <= now + 30
+            and all(
+                row.get(key) is None or number(row[key]) is not None
+                for key in ('downMbps', 'upMbps')
+            )
+        )
+
+    return [
+        {'at': row['at'], 'downMbps': row.get('downMbps'), 'upMbps': row.get('upMbps')}
+        for row in (rows if isinstance(rows, list) else [])
+        if valid(row)
+    ][-MAX_SPEED_TESTS:]
+
+
+def load_modem_line(path, now):
+    """The router monitor's latest fiber reading, validated; None when there is none."""
+    try:
+        with open(path, encoding='utf-8') as handle:
+            value = json.loads(handle.read(50_000))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or type(value.get('at')) is not int:
+        return None
+    if not 0 < value['at'] <= now + 30:
+        return None
+
+    def reading(item, low, high):
+        is_number = isinstance(item, (int, float)) and not isinstance(item, bool)
+        return round(item, 2) if is_number and low <= item <= high else None
+
+    history, ports = value.get('history'), value.get('ports')
+    return {
+        'at': value['at'],
+        'isRegistered': value['isRegistered']
+        if isinstance(value.get('isRegistered'), bool)
+        else None,
+        'rxDbm': reading(value.get('rxDbm'), -60, 20),
+        'txDbm': reading(value.get('txDbm'), -60, 20),
+        'temperatureCelsius': reading(value.get('temperatureCelsius'), -40, 150),
+        'cpuPercent': reading(value.get('cpuPercent'), 0, 100),
+        'memoryPercent': reading(value.get('memoryPercent'), 0, 100),
+        'ports': [
+            {
+                'port': row['port'],
+                'isUp': row.get('isUp') is True,
+                'speedMbps': reading(row.get('speedMbps'), 1, 100_000),
+            }
+            for row in (ports if isinstance(ports, list) else [])[:8]
+            if isinstance(row, dict) and type(row.get('port')) is int and 1 <= row['port'] <= 8
+        ],
+        'rxHistory': [
+            reading(row[1], -60, 20)
+            for row in (history if isinstance(history, list) else [])[-120:]
+            if isinstance(row, list) and len(row) == 2
+        ],
+    }
+
+
 def save_closed_outages(path, summary_value):
     """Write finished outages for the alert watcher, only when they change (rare SD-card writes).
     Returns True when the file was replaced."""
@@ -185,6 +258,8 @@ def daily_facts(snapshot, now):
     ]
     longest = max(closed, key=lambda outage: outage['seconds'], default=None)
 
+    tests = [test for test in internet.get('speedTests') or [] if now - test['at'] <= KEEP_SECONDS]
+
     def names(items):
         return [str(device.get('name'))[:40] for device in items][:10]
 
@@ -204,6 +279,7 @@ def daily_facts(snapshot, now):
         'outages': len(closed),
         'outageSeconds': sum(outage['seconds'] for outage in closed),
         'longest': {'seconds': longest['seconds'], 'cause': longest['cause']} if longest else None,
+        'speedTest': tests[-1] if tests else None,
         'seen': sum(1 for device in devices if device.get('presence') == 'seen'),
         'newDevices': names(device for device in devices if device.get('isNew')),
         'weakWifi': [

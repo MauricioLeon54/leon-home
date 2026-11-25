@@ -120,6 +120,34 @@ function router(value: unknown, now: number): RouterTelemetry {
     wifi: wifi(item.wifi),
   };
 }
+function modem(value: unknown, now: number): InternetHealth['modem'] {
+  if (value === null || value === undefined) return null;
+  const item = record(value),
+    at = timestamp(item.at, now),
+    lossPercent = finite(item.lossPercent, 0, 100);
+  if (at === null || lossPercent === null) throw new Error('Invalid modem reading');
+  return { at, lossPercent, averageMs: finite(item.averageMs) };
+}
+function modemLine(value: unknown, now: number): InternetHealth['modemLine'] {
+  if (value === null || value === undefined) return null;
+  const item = record(value),
+    at = timestamp(item.at, now);
+  if (at === null) throw new Error('Invalid modem line');
+  return {
+    at,
+    isRegistered: typeof item.isRegistered === 'boolean' ? item.isRegistered : null,
+    rxDbm: finite(item.rxDbm, -60, 20),
+    txDbm: finite(item.txDbm, -60, 20),
+    temperatureCelsius: finite(item.temperatureCelsius, -40, 150),
+    cpuPercent: finite(item.cpuPercent, 0, 100),
+    memoryPercent: finite(item.memoryPercent, 0, 100),
+    ports: optionalList(item.ports, 8).map(row => {
+      const port = record(row);
+      return { port: integer(port.port, 1, 8), isUp: port.isUp === true, speedMbps: finite(port.speedMbps, 1, 100_000) };
+    }),
+    rxHistory: optionalList(item.rxHistory, 120).map(row => finite(row, -60, 20)),
+  };
+}
 function internet(value: unknown, now: number): InternetHealth | null {
   if (value === null || value === undefined) return null;
   const item = record(value);
@@ -151,6 +179,14 @@ function internet(value: unknown, now: number): InternetHealth | null {
     routerLossSeries: optionalList(item.routerLossSeries, 96).map(value => finite(value, 0, 100)),
     internetLatencySeries: optionalList(item.internetLatencySeries, 96).map(value => finite(value, 0, 100_000)),
     dnsLatencySeries: optionalList(item.dnsLatencySeries, 96).map(value => finite(value, 0, 100_000)),
+    modem: modem(item.modem, now),
+    modemLine: modemLine(item.modemLine, now),
+    speedTests: optionalList(item.speedTests, 30).map(value => {
+      const test = record(value),
+        at = timestamp(test.at, now);
+      if (at === null) throw new Error('Invalid speed test');
+      return { at, downMbps: finite(test.downMbps, 0, 100_000), upMbps: finite(test.upMbps, 0, 100_000) };
+    }),
     outages: optionalList(item.outages, 10).map(value => {
       const outage = record(value),
         start = timestamp(outage.start, now),

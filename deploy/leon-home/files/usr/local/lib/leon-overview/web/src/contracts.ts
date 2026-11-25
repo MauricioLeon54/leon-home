@@ -64,6 +64,17 @@ export interface RouterTelemetry {
   wifi: Wifi | null;
 }
 export type OutageCause = 'provider' | 'home';
+export interface ModemLine {
+  at: number;
+  isRegistered: boolean | null; // the provider's equipment accepted this modem
+  rxDbm: number | null;
+  txDbm: number | null;
+  temperatureCelsius: number | null;
+  cpuPercent: number | null;
+  memoryPercent: number | null;
+  ports: Array<{ port: number; isUp: boolean; speedMbps: number | null }>; // ≤ 8
+  rxHistory: Array<number | null>; // ≤ 120, oldest first
+}
 export interface InternetHealth {
   samples: number;
   availability: number | null;
@@ -72,6 +83,9 @@ export interface InternetHealth {
   routerLossSeries: Array<number | null>;
   internetLatencySeries: Array<number | null>;
   dnsLatencySeries: Array<number | null>;
+  modem: { at: number; lossPercent: number; averageMs: number | null } | null; // ping only; null: not configured
+  modemLine: ModemLine | null; // the modem's own fiber reading, every few hours
+  speedTests: Array<{ at: number; downMbps: number | null; upMbps: number | null }>; // ≤ 30, oldest first; null: failed
   outages: Array<{ start: number; end: number | null; seconds: number; cause: OutageCause }>;
 }
 export interface Snapshot {
