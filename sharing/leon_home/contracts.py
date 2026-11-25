@@ -23,7 +23,6 @@ FILES = frozenset(
             'router_telemetry.py',
             'internet_health.py',
             'web_assets.py',
-            'network-map.html',
             'family.py',
             'update_client.py',
             'updates.html',
@@ -32,11 +31,10 @@ FILES = frozenset(
     + [
         'app/web/dist/' + name
         for name in (
-            'app.js',
-            'home.js',
+            'leon.js',
+            'leon.css',
             'serviceWorker.js',
             'updates.js',
-            'network-map.css',
             'home.css',
             'updates.css',
         )

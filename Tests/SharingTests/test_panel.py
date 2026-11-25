@@ -56,7 +56,8 @@ class PanelTests(unittest.TestCase):
         with patch.object(family.overview, 'OWNERS', {'owner@example.test'}):
             with self.request('/updates', 'owner@example.test') as response:
                 body = response.read().decode()
-                self.assertIn('updates.js', body)
+                for asset in ('home.css', 'updates.css', 'updates.js'):
+                    self.assertIn('/network-map/assets/' + asset, body)
                 self.assertIn('lang="en"', body)
                 self.assertIn('Accept and install', body)
                 self.assertNotIn('onclick=', body)
@@ -70,8 +71,8 @@ class PanelTests(unittest.TestCase):
             patch.object(family.overview, '_data', sample),
         ):
             for path, expected in (
-                ('/', 'Home network'),
-                ('/network-map', 'Interactive device map'),
+                ('/', 'src="/network-map/assets/leon.js"'),
+                ('/network-map', 'src="/network-map/assets/leon.js"'),
                 ('/offline', 'Connect Tailscale and try again.'),
             ):
                 with self.subTest(path=path):
@@ -81,6 +82,16 @@ class PanelTests(unittest.TestCase):
                         self.assertIn(expected, body)
             with self.request('/manifest.webmanifest', 'owner@example.test') as response:
                 self.assertEqual(json.load(response)['lang'], 'en')
+            with self.request('/leon/v1/session', 'owner@example.test') as response:
+                features = json.load(response)['features']
+                self.assertEqual(features, {'automation': False, 'storage': True, 'updates': True})
+
+    def test_removed_automation_form_returns_not_found(self):
+        with patch.object(family.overview, 'OWNERS', {'owner@example.test'}):
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                self.request('/automation/settings', 'owner@example.test', b'apiKey=fixture')
+            self.assertEqual(raised.exception.code, 404)
+            raised.exception.close()
 
     def test_acceptance_requires_owner_token_same_origin_json_and_exact_version_body(self):
         with (

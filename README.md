@@ -34,6 +34,8 @@ everyday use happens in the browser. No Mac app is required.
 | Scoped support         | Access to one Pi through a dedicated SSH key and a small set of maintenance commands.               |
 | Router controls        | Traffic, Wi-Fi status, port switches and device pauses for a supported router, after owner unlock.  |
 | Quiet disk maintenance | Weekly cleanup of obsolete downloaded system packages, using existing operating-system timers.      |
+| English and Spanish    | Choose the language in Settings on each device.                                                     |
+| Connection guide       | Plain steps for iPhone, Mac, Windows and TV, with each drive’s sign-in shown on request.            |
 
 The map represents observed devices, not guaranteed physical wiring. Traffic readings and router
 controls support the HUAWEI WiFi BE3 Pro and need a one-time router connection from the panel;

@@ -9,7 +9,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = pathlib.Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / 'sharing'))
@@ -26,6 +26,29 @@ SITE = {
     'interface': 'eth0',
     'hostname': 'leon-test',
 }
+
+
+class WebReleaseContractTests(unittest.TestCase):
+    def test_family_release_contains_only_current_web_assets(self):
+        self.assertEqual(
+            {
+                name.removeprefix('app/web/dist/')
+                for name in FILES
+                if name.startswith('app/web/dist/')
+            },
+            {'leon.js', 'leon.css', 'serviceWorker.js', 'home.css', 'updates.js', 'updates.css'},
+        )
+        self.assertNotIn('app/network-map.html', FILES)
+
+    def test_activation_accepts_network_map_shell_response(self):
+        connection = Mock()
+        connection.getresponse.return_value.status = 200
+        with patch.object(activation, 'UnixHTTP', return_value=connection):
+            self.assertTrue(activation.healthy(SITE['owner']))
+        connection.request.assert_called_once_with(
+            'GET', '/network-map', headers={'Tailscale-User-Login': SITE['owner']}
+        )
+        connection.close.assert_called_once_with()
 
 
 class ReleaseFixture(unittest.TestCase):

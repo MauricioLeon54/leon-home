@@ -1,0 +1,160 @@
+// Storage tab: drive cards with a capacity meter, copyable addresses, the file browser and automation.
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+.group > .card + .card {
+  margin-top: 12px;
+}
+.drive-kind {
+  color: color('ash');
+  font-size: var(--text-s);
+}
+.drive-name {
+  margin-top: 2px;
+  font-size: var(--text-xl);
+  overflow-wrap: anywhere;
+}
+.meter {
+  height: 8px;
+  margin-top: 16px;
+  border-radius: 999px;
+  background: rgba(238, 234, 227, 0.1);
+  overflow: hidden;
+}
+.meter-fill {
+  display: block;
+  width: calc(var(--used) * 1%);
+  height: 100%;
+  border-radius: inherit;
+  background: color('good');
+  transition: width var(--duration-slow) var(--ease-smooth-out);
+
+  .is-full & {
+    background: color('warn');
+  }
+  @include reduced-motion {
+    transition: none;
+  }
+}
+.drive-space {
+  margin-top: 10px;
+  color: color('ash');
+  @include numeric;
+
+  b {
+    margin-right: 4px;
+    color: color('bone');
+    font-size: var(--text-xl);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+}
+.drive-facts {
+  margin-top: 4px;
+  color: color('ash');
+  font-size: var(--text-s);
+}
+.drive-actions {
+  margin-top: 16px;
+}
+a.btn,
+a.link-button {
+  text-decoration: none;
+}
+a.link-button {
+  display: inline-flex;
+  align-items: center;
+  min-width: $tap;
+  justify-content: center;
+}
+.address {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: var(--text-s);
+  overflow-wrap: anywhere;
+}
+.copy-button {
+  appearance: none;
+  min-width: $tap;
+  min-height: $tap;
+  margin-right: -8px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: color('bone');
+  font: inherit;
+  font-size: var(--text-s);
+  font-weight: 500;
+  cursor: pointer;
+
+  &:active {
+    opacity: 0.6;
+  }
+}
+
+// How to connect
+.guide-steps {
+  margin: 0;
+  padding-left: 24px;
+
+  li + li {
+    margin-top: 10px;
+  }
+  li::marker {
+    color: color('ash');
+    font-weight: 600;
+  }
+}
+.guide-value {
+  padding-right: 0;
+  padding-left: 0;
+
+  .row-body > * {
+    display: block;
+  }
+}
+
+// Files and automation
+.files-search {
+  margin-top: 4px;
+}
+.field {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: $tap;
+  padding: 10px 14px;
+  border: 1px solid color('line-strong');
+  border-radius: var(--radius-s);
+  background: color('bg');
+  color: color('bone');
+  font: inherit;
+  font-size: 16px; // below 16 px iOS zooms the page on focus
+
+  &::placeholder {
+    color: color('ash');
+  }
+}
+.field-label {
+  display: block;
+  margin: 14px 0 6px;
+  color: color('ash');
+  font-size: var(--text-s);
+}
+.settings-form .buttons {
+  margin-top: 16px;
+}
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  font-size: var(--text-l);
+  font-weight: 600;
+}
+.status-actions {
+  margin-top: 16px;
+}
+.group > .segmented + .list,
+.group > .segmented + .empty {
+  margin-top: 12px;
+}

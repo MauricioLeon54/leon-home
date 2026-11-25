@@ -1,0 +1,28 @@
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: color('ash');
+
+  &.is-good {
+    background: color('good');
+  }
+  &.is-warn {
+    background: color('warn');
+  }
+  &.is-danger {
+    background: color('danger');
+  }
+  &.is-idle {
+    background: rgba(238, 234, 227, 0.3);
+  }
+  // No reading is a ring, never a filled dot
+  &.is-unknown {
+    background: none;
+    border: 1.5px solid color('ash');
+  }
+}

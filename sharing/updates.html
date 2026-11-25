@@ -1,31 +1,35 @@
 <main class="updates">
-  <a class="back" href="/"><span aria-hidden="true">‹</span> Back to home</a>
+  <a class="back" href="/"><span aria-hidden="true">‹</span> <span data-i18n>Back to home</span></a>
   <header class="release-head">
     <img class="release-mark" src="/brand/symbol.png" alt="" />
-    <h1>Updates</h1>
+    <h1 data-i18n>Updates</h1>
   </header>
-  <p class="intro">
+  <p class="intro" data-i18n>
     You choose when LEÓN Home installs an update. Releases are signed, and one that fails verification is never
     installed.
   </p>
   <section class="release" aria-labelledby="release-title" data-phase="checking">
-    <p id="release-status" role="status" aria-live="polite">Checking your Pi…</p>
-    <h2 id="release-title">Updates</h2>
+    <p id="release-status" role="status" aria-live="polite" data-i18n>Checking your Pi…</p>
+    <h2 id="release-title" data-i18n>Updates</h2>
     <p id="release-version"></p>
     <ul id="release-notes"></ul>
-    <p id="release-message">Pi-hole keeps running while the panel updates.</p>
+    <p id="release-message" data-i18n>Pi-hole keeps running while the panel updates.</p>
     <div class="release-actions">
-      <button id="release-apply" class="primary" hidden>Accept and install</button
-      ><button id="release-check">Check for updates</button>
+      <button id="release-apply" class="primary" hidden data-i18n>Accept and install</button
+      ><button id="release-check" data-i18n>Check for updates</button>
     </div>
   </section>
-  <p class="small muted">This page updates LEÓN Home. System and Pi-hole updates are maintained separately.</p>
+  <p class="small muted" data-i18n>
+    This page updates LEÓN Home. System and Pi-hole updates are maintained separately.
+  </p>
   <dialog id="release-confirm" aria-labelledby="release-confirm-title">
-    <h2 id="release-confirm-title">Install this update?</h2>
-    <p>The panel restarts briefly. The previous version is kept and restored automatically if a check fails.</p>
+    <h2 id="release-confirm-title" data-i18n>Install this update?</h2>
+    <p data-i18n>
+      The panel restarts briefly. The previous version is kept and restored automatically if a check fails.
+    </p>
     <div class="buttons">
-      <button id="release-confirm-no">Later</button
-      ><button id="release-confirm-yes" class="primary">Install now</button>
+      <button id="release-confirm-no" data-i18n>Later</button
+      ><button id="release-confirm-yes" class="primary" data-i18n>Install now</button>
     </div>
   </dialog>
 </main>

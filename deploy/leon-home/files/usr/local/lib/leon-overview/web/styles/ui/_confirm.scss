@@ -1,0 +1,27 @@
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+.confirm-message {
+  color: color('ash');
+}
+.confirm-phrase {
+  margin-top: 12px;
+  font-size: var(--text-s);
+}
+.confirm-input {
+  width: 100%;
+  min-height: $tap;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid color('line-strong');
+  border-radius: var(--radius-s);
+  background: color('bg');
+  color: color('bone');
+  font: inherit;
+  font-size: 16px; // below 16 px iOS zooms the page on focus
+}
+.confirm-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}

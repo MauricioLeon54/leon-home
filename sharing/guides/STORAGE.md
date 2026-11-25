@@ -25,6 +25,28 @@ administrator writes `/etc/leon-overview/storage.json` (root-owned, mode `0644`)
 Use at most four peers with `smb://` addresses. Invalid entries are ignored. A peer link opens
 the other home's share in Files or Finder; its owner must grant you TCP 445 on that Pi.
 
+## Show sign-ins in the guide
+
+**Storage → How to connect** gives plain steps for iPhone, Mac, Windows and the TV. It can also show
+the user and password of each drive, so nobody has to send them in a message. An administrator
+writes `/etc/leon-overview/storage-accounts.json` as root, group `leon-overview`, mode `0640`:
+
+```json
+{
+  "accounts": [
+    { "drive": "Edgar's drive", "user": "nas_owner", "password": "...", "canWrite": true },
+    { "drive": "Mau's drive", "user": "nas_guest", "password": "...", "canWrite": false }
+  ]
+}
+```
+
+`drive` must match the drive's own name or a peer's name in `storage.json`. `canWrite` only changes
+the explanation; Samba decides what an account can do. Add only accounts the panel's owner may use.
+The panel refuses the file if other users can read it. It sends a password only when the owner taps
+Show, hides it after a minute and never logs it. The file stores passwords as plain text: anyone with
+administrator access to the Pi can read them, and the owner's signed-in Tailscale devices can show
+them. Keep the file out of Git. To stop showing a password, delete its entry.
+
 ## Prepare the disk
 
 1. Connect one drive and inspect it with `lsblk -f`. Confirm the filesystem, UUID, available

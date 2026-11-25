@@ -1,0 +1,66 @@
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+.chart-block {
+  margin-top: 20px;
+}
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 8px;
+  color: color('ash');
+  font-size: 12px;
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .legend-span {
+    margin-left: auto;
+  }
+}
+.swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+
+  &.is-total {
+    background: rgba(238, 234, 227, 0.3);
+  }
+  &.is-blocked {
+    background: color('warn');
+  }
+}
+.chart-bars {
+  display: block;
+  width: 100%;
+  height: 72px;
+
+  .total {
+    fill: rgba(238, 234, 227, 0.2);
+  }
+  .blocked {
+    fill: color('warn');
+  }
+}
+.chart-spark {
+  display: block;
+  width: 100%;
+  height: 56px;
+
+  polyline {
+    fill: none;
+    stroke: color('bone');
+    stroke-width: 1.6;
+    vector-effect: non-scaling-stroke;
+  }
+}
+.axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: color('ash');
+  font-size: 11px;
+}

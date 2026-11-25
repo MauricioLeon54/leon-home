@@ -20,6 +20,7 @@ BODY = Path(__file__).with_name('updates.html').read_text(encoding='utf-8')
 
 class Handler(overview.Handler):
     storage_automation = False
+    signed_updates = True
 
     def setup(self):
         super().setup()
@@ -29,6 +30,18 @@ class Handler(overview.Handler):
         # Empty policy is never an invitation to every tailnet/shared user.
         login = (self.headers.get('Tailscale-User-Login') or '').strip().lower()
         return login if login and login in overview.OWNERS else None
+
+    def versions(self):
+        try:
+            state = update_client.request('status')
+            available = state.get('available')
+            found = (state.get('version'), available.get('version') if available else None)
+        except (AttributeError, OSError, ValueError):
+            return None, None
+        return tuple(
+            value if isinstance(value, str) and overview.VERSION.fullmatch(value) else None
+            for value in found
+        )
 
     def do_GET(self):
         path = self.path.split('?', 1)[0]
@@ -86,17 +99,6 @@ class Handler(overview.Handler):
         return self.reply(202, json.dumps(result).encode(), 'application/json')
 
 
-def render(data, login, nonce):
-    page = original_render(data, login, nonce, show_automation=False).decode()
-    links = '<nav class="section links" aria-label="Other panels">'
-    return page.replace(
-        links, links + '<a href="/updates">Updates<span aria-hidden="true">›</span></a>', 1
-    ).encode()
-
-
-original_render = overview.render
-
-
 class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
     block_on_close = False
@@ -126,7 +128,6 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
 if __name__ == '__main__':
     if not overview.OWNERS:
         raise SystemExit('Configure the panel owner before starting LEÓN Home.')
-    overview.render = render
     signal.signal(signal.SIGTERM, overview.save_internet_and_exit)
     threading.Thread(target=overview.sampler, daemon=True).start()
     if os.path.exists(SOCKET):

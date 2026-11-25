@@ -1,0 +1,794 @@
+// Network area: topology map, traffic, router ports and the device page. Tokens only.
+@use 'sass:math';
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+$mark: 52px;
+$glyph: 40px;
+$branch-indent: 24px;
+$head-height: 46px;
+$ping-period: 2.8s;
+
+// The router: the LEÓN mark, its name and a one-line summary
+.hub {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+
+  .mark {
+    position: relative;
+    flex: none;
+    width: $mark;
+    height: $mark;
+    border-radius: 50%;
+    border: 1px solid color('line-strong');
+    background: color('surface') url('/brand/symbol.png') center / 26px no-repeat;
+  }
+  .body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .name {
+    font-size: var(--text-l);
+    font-weight: 600;
+    @include ellipsis;
+  }
+  .meta {
+    color: color('ash');
+    font-size: var(--text-s);
+    @include numeric;
+  }
+}
+.node.den {
+  color: color('bone');
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  margin: -6px -10px;
+  padding: 6px 14px 6px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-m);
+  background: none;
+  text-align: left;
+
+  // Bridge from the mark to the trunk across the button padding
+  .mark::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 100%;
+    height: 8px;
+    border-left: 1px solid color('line-strong');
+  }
+  &.selected {
+    border-color: color('line-strong');
+    background: color('surface');
+  }
+}
+
+// Trunk and branches
+.branches {
+  margin-left: math.div($mark, 2) - 0.5px;
+}
+.branch {
+  position: relative;
+  padding-left: $branch-indent;
+
+  // Vertical trunk; it stops at the last visible branch
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid color('line-strong');
+  }
+  &:not(:has(~ .branch:not([hidden])))::before {
+    bottom: auto;
+    height: math.div($head-height, 2);
+  }
+  // Elbow into the branch heading
+  &::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: math.div($head-height, 2);
+    width: $branch-indent - 8px;
+    border-top: 1px solid color('line-strong');
+  }
+}
+.branch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: $head-height;
+  margin: 0;
+  font-size: var(--text-m);
+  font-weight: 600;
+  color: color('bone');
+
+  .conn {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: color('ash');
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .count {
+    color: color('ash');
+    font-weight: 400;
+    font-size: var(--text-s);
+    @include numeric;
+  }
+}
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 8px;
+  padding-bottom: 16px; // phones fall back to one full-width column, so names are never cut short
+}
+
+// Device tiles
+.tiles .node {
+  text-decoration: none;
+  color: color('bone');
+  display: grid;
+  grid-template-columns: $glyph minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 8px 10px;
+  border: 1px solid color('line');
+  border-radius: var(--radius-m);
+  background: color('surface');
+  text-align: left;
+  transition:
+    border-color var(--duration-quick) var(--ease-smooth-out),
+    background-color var(--duration-quick) var(--ease-smooth-out);
+
+  &:active:not(:disabled) {
+    transform: scale(var(--scale-small));
+  }
+  @include hover {
+    &:not(:disabled):hover {
+      background: color('surface');
+      border-color: color('line-strong');
+    }
+  }
+  &.selected {
+    border-color: color('bone');
+    background: color('raised');
+  }
+  .glyph {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: $glyph;
+    height: $glyph;
+    border-radius: 50%;
+    background: color('raised');
+    border: 1px solid color('line');
+
+    // Presence: filled = seen now, grey = not seen, ring = unknown
+    &::after,
+    &::before {
+      content: '';
+      position: absolute;
+      right: -1px;
+      bottom: -1px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    &::after {
+      background: color('ash');
+      border: 2px solid color('surface');
+    }
+  }
+  .art {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: color('bone');
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .name {
+    font-size: 14px;
+    font-weight: 500;
+    @include ellipsis;
+  }
+  .meta {
+    display: flex;
+    align-items: center;
+    color: color('ash');
+    font-size: 12px;
+    @include ellipsis;
+
+    &.is-flowing {
+      color: color('down');
+      @include numeric;
+    }
+  }
+  .badge {
+    font-size: 10px;
+    padding: 3px 7px;
+  }
+
+  &.is-online .glyph {
+    &::after {
+      background: color('good');
+    }
+    // A small ping from the dot: the only repeating motion, and only for devices seen now
+    &::before {
+      border: 1.5px solid color('good');
+      animation: ping $ping-period var(--ease-out) var(--delay, 0s) infinite;
+    }
+  }
+  &.is-away {
+    .art {
+      stroke: color('ash');
+    }
+    .name {
+      color: color('ash');
+    }
+  }
+  &.is-unknown .glyph {
+    border-style: dashed;
+    border-color: color('line-strong');
+
+    &::after {
+      background: color('surface');
+      border: 1.5px solid color('ash');
+    }
+  }
+  &.is-paused .glyph {
+    border-color: rgba(212, 168, 102, 0.55);
+  }
+  // First paint: transitions.dev staggered reveal
+  &.is-entering {
+    animation: tile-enter var(--duration-slow) var(--ease-smooth-out) var(--stagger, 0ms) both;
+  }
+}
+// Traffic the router reports right now: three dots that pass along, like data arriving
+.activity {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: 5px;
+
+  i {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: activity 1.2s var(--ease-in-out) infinite;
+
+    &:nth-child(2) {
+      animation-delay: 0.15s;
+    }
+    &:nth-child(3) {
+      animation-delay: 0.3s;
+    }
+  }
+}
+@keyframes ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  60%,
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+@keyframes activity {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@keyframes tile-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--distance-base));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@include reduced-motion {
+  .tiles .node.is-online .glyph::before,
+  .activity i,
+  .tiles .node.is-entering {
+    animation: none !important;
+  }
+  .tiles .node.is-online .glyph::before {
+    opacity: 0;
+  }
+  .activity i {
+    opacity: 1;
+  }
+}
+
+// Ports: the router panel keeps its hardware look
+.port-panel {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 20px 10px 14px;
+  border-radius: var(--radius-l);
+  background: color('well');
+  border: 1px solid color('line');
+  overflow-x: auto;
+}
+.port {
+  flex: 0 1 74px;
+  min-width: 60px;
+  min-height: 0;
+  padding: 10px 4px 8px;
+  color: color('bone');
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-m);
+  background: none;
+  border: 1px solid transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  transition: border-color var(--duration-quick) var(--ease-smooth-out);
+}
+.port.selected {
+  border-color: color('line-strong');
+  background: rgba(238, 234, 227, 0.04);
+}
+.port .leds {
+  display: flex;
+  gap: 8px;
+}
+.port .led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: color('off');
+}
+.port .led.on {
+  background: color('good');
+}
+.port .led.amber {
+  background: color('warn');
+}
+.port .led.unknown {
+  background: none;
+  border: 1px solid color('ash');
+}
+.jack {
+  width: 44px;
+  height: 36px;
+  border-radius: 5px;
+  background: color('socket');
+  border: 2px solid color('off');
+  position: relative;
+}
+.jack:after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -2px;
+  height: 8px;
+  background: color('off');
+  border-radius: 2px 2px 0 0;
+}
+.port.off .jack {
+  opacity: 0.4;
+}
+.port b {
+  font-size: var(--text-s);
+  font-weight: 600;
+}
+.port small {
+  font-size: 11px;
+  color: color('ash');
+  white-space: nowrap;
+}
+
+@media (max-width: 360px) {
+  .port-panel {
+    gap: 2px;
+    padding-inline: 4px;
+  }
+  .port {
+    min-width: 0;
+  }
+  .jack {
+    width: 38px;
+  }
+}
+
+// Map chrome
+.net-controls {
+  display: grid;
+  gap: 10px;
+}
+.net-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  color: color('ash');
+  font-size: var(--text-s);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.net-view {
+  min-width: 0;
+}
+.map {
+  min-width: 0;
+  margin-top: 18px;
+}
+.map-toolbar {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.text-input {
+  min-width: 0;
+  min-height: $tap;
+  padding: 10px 12px;
+  border: 1px solid color('line-strong');
+  border-radius: var(--radius-s);
+  background: color('bg');
+  color: color('bone');
+  font: inherit;
+  font-size: 16px; // below 16 px iOS zooms the page on focus
+
+  &.search {
+    border-radius: 999px;
+    padding-inline: 16px;
+    background: color('surface');
+  }
+}
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  color: color('ash');
+
+  li {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+}
+.key {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: color('ash');
+
+  &.online {
+    background: color('good');
+  }
+  &.unknown {
+    background: none;
+    border: 1.5px solid color('ash');
+  }
+}
+.map-note {
+  display: inline-block;
+  margin: 0 0 14px;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, #{color('warn')} 40%, transparent);
+  border-radius: 999px;
+  font-size: 12px;
+}
+.map-empty {
+  margin: 8px 0 0;
+  color: color('ash');
+}
+.spaced {
+  margin-top: 12px;
+}
+.method {
+  margin-top: 16px;
+
+  summary {
+    display: flex;
+    align-items: center;
+    min-height: $tap;
+    color: color('ash');
+    font-size: var(--text-s);
+    cursor: pointer;
+  }
+}
+
+// Traffic
+.totals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.total {
+  min-width: 0;
+
+  span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: color('ash');
+    font-size: var(--text-s);
+  }
+  b {
+    display: block;
+    @include numeric;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+  small {
+    color: color('ash');
+    font-size: var(--text-m);
+    font-weight: 500;
+  }
+}
+.swatch {
+  &.is-d {
+    background: color('down');
+  }
+  &.is-u {
+    background: color('up');
+  }
+}
+.net-chart {
+  display: block;
+  width: 100%;
+  height: 150px;
+  margin-top: 16px;
+
+  .grid {
+    stroke: color('line');
+  }
+  .area.d {
+    fill: rgba(159, 195, 232, 0.12);
+  }
+  .area.u {
+    fill: rgba(217, 163, 199, 0.1);
+  }
+  .line {
+    fill: none;
+    stroke-width: 1.8;
+    vector-effect: non-scaling-stroke;
+    stroke-linejoin: round;
+  }
+  .line.d {
+    stroke: color('down');
+  }
+  .line.u {
+    stroke: color('up');
+  }
+  // Latency is not traffic: bone line, no direction colour
+  &.latency {
+    height: 110px;
+  }
+  .line.latency {
+    stroke: color('bone');
+  }
+  .area.latency {
+    fill: rgba(238, 234, 227, 0.05);
+  }
+  &.spark {
+    width: 92px;
+    height: 28px;
+    margin: 0;
+  }
+}
+.traffic-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 92px 78px;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 16px;
+  color: color('bone');
+  text-decoration: none;
+
+  &:active {
+    background: rgba(238, 234, 227, 0.07);
+  }
+  .name {
+    min-width: 0;
+    @include ellipsis;
+  }
+  .name small {
+    display: block;
+    color: color('ash');
+    font-size: 12px;
+  }
+  .icon-badge {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    background: rgba(238, 234, 227, 0.06);
+  }
+  .k {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: color('bone');
+    stroke-width: 1.8;
+  }
+  .num {
+    text-align: right;
+    font-size: var(--text-s);
+    @include numeric;
+
+    span {
+      display: block;
+    }
+  }
+  .bar {
+    height: 2px;
+    margin-top: 6px;
+    border-radius: 2px;
+    background: color('down');
+    opacity: 0.6;
+  }
+  @include phone {
+    grid-template-columns: 28px minmax(0, 1fr) 72px;
+
+    .spark {
+      display: none;
+    }
+  }
+}
+
+// Wi-Fi signal
+.signal {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 14px;
+  flex: none;
+
+  i {
+    width: 5px;
+    border-radius: 1px;
+    background: color('off');
+
+    &:nth-child(1) {
+      height: 5px;
+    }
+    &:nth-child(2) {
+      height: 9px;
+    }
+    &:nth-child(3) {
+      height: 14px;
+    }
+  }
+  &.good i.on {
+    background: color('good');
+  }
+  &.ok i.on {
+    background: color('bone');
+  }
+  &.weak i.on {
+    background: color('warn');
+  }
+}
+
+// Unlock form and inline forms
+.unlock-form,
+.inline-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.inline-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: 0;
+}
+.note.is-good {
+  color: color('good');
+}
+.note.is-warn {
+  color: color('warn');
+}
+
+// Device page
+.device-head {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 8px 0 0;
+  text-align: center;
+}
+.device-art {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: color('raised');
+  border: 1px solid color('line');
+
+  .art {
+    width: 38px;
+    height: 38px;
+    fill: none;
+    stroke: color('bone');
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  &.is-away .art {
+    stroke: color('ash');
+  }
+  &.is-unknown {
+    border-style: dashed;
+  }
+}
+.day-chips {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.day-chip {
+  appearance: none;
+  flex: 1;
+  min-width: 0;
+  min-height: $tap;
+  border: 1px solid color('line-strong');
+  border-radius: 999px;
+  background: none;
+  color: color('bone');
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+
+  &[aria-pressed='true'] {
+    background: color('bone');
+    border-color: color('bone');
+    color: color('ink');
+  }
+  &:disabled {
+    opacity: 0.4;
+  }
+}
+.card .time-fields {
+  margin-bottom: 14px;
+}
+
+.port-panel + .card,
+.card + .spaced {
+  margin-top: 12px;
+}

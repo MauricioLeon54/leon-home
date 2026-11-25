@@ -70,6 +70,7 @@ function device(value: unknown, now: number): Device {
     isNew: item.isNew === true,
     canRename: item.canRename === true,
     canPause: item.canPause === true,
+    canWake: item.canWake === true,
     paused: item.paused === true,
     pauseSchedule: parseSchedule(item.pauseSchedule),
     traffic: traffic(item.traffic, ip),
@@ -127,7 +128,15 @@ function internet(value: unknown, now: number): InternetHealth | null {
     const reading = record(item.current),
       at = timestamp(reading.at, now);
     if (reading.state !== 'up' && reading.state !== 'provider' && reading.state !== 'home') throw new Error('Invalid health state');
-    if (at !== null) current = { at, state: reading.state, internetMs: finite(reading.internetMs), routerMs: finite(reading.routerMs) };
+    if (at !== null)
+      current = {
+        at,
+        state: reading.state,
+        internetMs: finite(reading.internetMs),
+        routerMs: finite(reading.routerMs),
+        dnsMs: finite(reading.dnsMs, 0, 100_000),
+        routerLossPercent: finite(reading.routerLossPercent, 0, 100),
+      };
   }
   return {
     samples: integer(item.samples ?? 0, 0, 10000),
@@ -139,6 +148,9 @@ function internet(value: unknown, now: number): InternetHealth | null {
       if (point.length < 2 || at === null || (point.length === 3 && finite(point[2], 0, 100) === null)) throw new Error('Invalid health sample');
       return [at, finite(point[1])] satisfies readonly [number, number | null];
     }),
+    routerLossSeries: optionalList(item.routerLossSeries, 96).map(value => finite(value, 0, 100)),
+    internetLatencySeries: optionalList(item.internetLatencySeries, 96).map(value => finite(value, 0, 100_000)),
+    dnsLatencySeries: optionalList(item.dnsLatencySeries, 96).map(value => finite(value, 0, 100_000)),
     outages: optionalList(item.outages, 10).map(value => {
       const outage = record(value),
         start = timestamp(outage.start, now),

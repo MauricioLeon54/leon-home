@@ -12,6 +12,8 @@ $colors: (
   'line-strong': rgba(238, 234, 227, 0.18),
   'good': #75b891,
   'warn': #d4a866,
+  // Destructive actions and failed state; distinct from warn (needs attention)
+  'danger': #e5857a,
   'down': #9fc3e8,
   'up': #d9a3c7,
   'ink': #111110,
@@ -64,6 +66,12 @@ $scales: (
 $blurs: (
   'blur-small': 2px,
   'blur-medium': 3px,
+);
+
+// App frame heights (the bars add the device safe area on top)
+$layout: (
+  'nav-height': 52px,
+  'tab-height': 56px,
 );
 
 $numeric-font:

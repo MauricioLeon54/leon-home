@@ -18,11 +18,6 @@ A **maintenance update** needs assistance. The privileged signature verifier, op
 Pi-hole and Tailscale are maintained separately from normal panel updates. Changing the signing
 key or supported operating system also requires an explicit administrative maintenance step.
 
-Release 0.3.7 turns Storage into **Drives**: a card for each drive with its capacity, links to
-open it in Files or Finder, connection instructions for Mac, Windows, iPhone and TVs built from
-this Pi's real addresses, and optional links to other homes' drives. Name the drive and add
-other homes in `/etc/leon-overview/storage.json`, as the [storage guide](STORAGE.md) explains.
-
 Release 0.3.6 adds **Storage** to Home: USB drives, mount status, free space and a read-only
 **Browse files** view of the shared drive with search, downloads and in-place playback of MP4
 videos. It is a normal application update. Setting up the drive itself stays an optional
@@ -113,13 +108,15 @@ swiftc sharing/sign_release.swift -o .build/LeonReleaseSigner
 pnpm check
 pnpm build:netmap
 python3 sharing/build_release.py \
-  --version 0.3.7 --sequence 11 \
+  --version 0.3.6 --sequence 10 \
   --notes 'Describe the actual improvement for the person using the panel.' \
-  --output dist/leon-home/0.3.7 \
+  --output dist/leon-home/0.3.6 \
   --signer .build/LeonReleaseSigner
 ```
 
-These version numbers identify the 0.3.7 release. Increase both values for every later release.
+The command uses example release values. Before building, set the version and sequence for the
+intended release, increasing both from the previous published release. Match the output directory
+to the selected version.
 The output directory must be new; the builder refuses to overwrite it. Publish its five files
 only after verifying tests, signatures and correspondence with reviewed source. If the Keychain
 is locked, unlock it and use the original key rather than initializing a replacement.

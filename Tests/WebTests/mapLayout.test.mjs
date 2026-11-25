@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { artKind } from '../../.build/web-modules/deviceArt.js';
-import { matches } from '../../.build/web-modules/map.js';
 import { groupOf } from '../../.build/web-modules/mapLayout.js';
+import { matches } from '../../.build/web-modules/pages/network/mapView.js';
 
 function device({ connection = 'wifi', band = '5GHz', name = 'Device', address = '192.168.1.9' } = {}) {
   return { id: address, address, name, kind: '', role: '', presence: 'seen', traffic: connection ? { connection, band, downloadRouterMbps: 0, uploadRouterMbps: 0, history: [] } : null };

@@ -1,0 +1,306 @@
+// App frame: safe areas, a translucent navbar that condenses, a translucent tab bar and the
+// push / pop / tab View Transitions. Dark only.
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+[hidden] {
+  display: none !important;
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  background: color('bg');
+  overflow-x: hidden;
+}
+body {
+  margin: 0;
+  background: color('bg');
+  color: color('bone');
+  font: var(--text-m) / 1.45 $text-font;
+  font-variant-numeric: tabular-nums;
+  -webkit-tap-highlight-color: transparent;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+a {
+  color: inherit;
+}
+:focus-visible {
+  outline: 2px solid color('bone');
+  outline-offset: 2px;
+}
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.icon {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+// Content is a centred column; bars span the screen but align their contents to the same column.
+$column: 720px;
+.app {
+  --column-inset: max(var(--gutter), calc((100% - #{$column}) / 2));
+  min-height: 100dvh;
+}
+.view {
+  max-width: $column;
+  margin: 0 auto;
+  padding: calc(var(--nav-height) + env(safe-area-inset-top)) var(--gutter) calc(var(--tab-height) + env(safe-area-inset-bottom) + 32px);
+  outline: none;
+}
+.large-title {
+  font-size: 34px;
+  line-height: 1.12;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  padding: 6px 0 14px;
+}
+.page {
+  min-width: 0;
+}
+
+// Navigation bar: transparent over the large title, translucent and blurred once condensed
+.navbar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 20;
+  height: calc(var(--nav-height) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) var(--column-inset) 0;
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  border-bottom: 1px solid transparent;
+  transition:
+    background-color var(--duration-fast) var(--ease-smooth-out),
+    border-color var(--duration-fast) var(--ease-smooth-out);
+
+  &.is-condensed {
+    background: rgba(14, 14, 14, 0.78);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    backdrop-filter: blur(20px) saturate(1.4);
+    border-bottom-color: color('line');
+  }
+  .nav-title {
+    font-size: var(--text-m);
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-smooth-out);
+    @include ellipsis;
+  }
+  &.is-condensed .nav-title {
+    opacity: 1;
+  }
+  .nav-trailing {
+    justify-self: end;
+  }
+}
+.nav-back {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: $tap;
+  min-width: $tap;
+  margin-left: -8px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: color('bone');
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: opacity var(--duration-quick) var(--ease-smooth-out);
+
+  .icon {
+    width: 22px;
+    height: 22px;
+  }
+  &:active {
+    opacity: 0.5;
+  }
+}
+
+// Tab bar
+.tabbar {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  height: calc(var(--tab-height) + env(safe-area-inset-bottom));
+  padding: 0 var(--column-inset) env(safe-area-inset-bottom);
+  background: rgba(14, 14, 14, 0.82);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  @include hairline;
+
+  a {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: $tap;
+    color: color('ash');
+    text-decoration: none;
+    font-size: 11px;
+    font-weight: 500;
+    transition: color var(--duration-quick) var(--ease-smooth-out);
+
+    &[aria-current] {
+      color: color('bone');
+    }
+    &:active {
+      opacity: 0.6;
+    }
+  }
+  .icon {
+    width: 25px;
+    height: 25px;
+  }
+  a[aria-current] .icon {
+    stroke-width: 2.1;
+  }
+}
+
+.boot-failure {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: calc(48px + env(safe-area-inset-top)) var(--gutter);
+
+  p {
+    color: color('ash');
+  }
+}
+
+// View Transitions. The bars keep their own layers so only the page moves.
+.navbar {
+  view-transition-name: navbar;
+}
+.tabbar {
+  view-transition-name: tabbar;
+}
+::view-transition-group(navbar),
+::view-transition-group(tabbar) {
+  animation-duration: 0s;
+}
+::view-transition-old(navbar),
+::view-transition-old(tabbar) {
+  display: none;
+}
+::view-transition-new(navbar),
+::view-transition-new(tabbar) {
+  animation: none;
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  mix-blend-mode: normal;
+  animation-duration: var(--duration-medium);
+  animation-timing-function: var(--ease-smooth-out);
+  animation-fill-mode: both;
+}
+::view-transition-image-pair(root) {
+  isolation: auto;
+}
+
+// Push: the new page slides in from the right; the old one shifts left about 30 % and dims.
+html[data-navigation='push'] {
+  &::view-transition-old(root) {
+    animation-name: page-shift-out;
+    z-index: 1;
+  }
+  &::view-transition-new(root) {
+    animation-name: page-slide-in;
+    z-index: 2;
+    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45);
+  }
+}
+// Pop: the reverse.
+html[data-navigation='pop'] {
+  &::view-transition-old(root) {
+    animation-name: page-slide-out;
+    z-index: 2;
+    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45);
+  }
+  &::view-transition-new(root) {
+    animation-name: page-shift-in;
+    z-index: 1;
+  }
+}
+// Tab: a quick crossfade.
+html[data-navigation='tab'] {
+  &::view-transition-old(root) {
+    animation-name: page-fade-out;
+    animation-duration: var(--duration-quick);
+  }
+  &::view-transition-new(root) {
+    animation-name: page-fade-in;
+    animation-duration: var(--duration-quick);
+  }
+}
+@keyframes page-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes page-slide-out {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes page-shift-out {
+  to {
+    transform: translateX(-30%);
+    opacity: 0.5;
+  }
+}
+@keyframes page-shift-in {
+  from {
+    transform: translateX(-30%);
+    opacity: 0.5;
+  }
+}
+@keyframes page-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes page-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@include reduced-motion {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

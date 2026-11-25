@@ -1,0 +1,29 @@
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+.skeleton {
+  display: grid;
+  gap: 14px;
+  padding-top: 8px;
+}
+.skeleton-line {
+  border-radius: var(--radius-m);
+  background: linear-gradient(90deg, color('surface') 30%, color('raised') 50%, color('surface') 70%) 100% 0 / 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+
+  &.is-title {
+    width: 70%;
+    height: 34px;
+  }
+  &.is-block {
+    height: 96px;
+  }
+  @include reduced-motion {
+    animation: none;
+  }
+}

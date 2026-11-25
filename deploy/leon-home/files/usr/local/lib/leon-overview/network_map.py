@@ -2,6 +2,8 @@
 
 import ipaddress
 import math
+import os
+import re
 import time
 
 import router_telemetry
@@ -26,6 +28,33 @@ def text(value, limit=100):
     )
 
 
+def local_macs():
+    """This Pi's interface addresses. An unreadable inventory disables wake safely."""
+    try:
+        interfaces = os.listdir('/sys/class/net')
+        if len(interfaces) > 64:
+            return None
+        result = set()
+        for interface in interfaces:
+            with open(f'/sys/class/net/{interface}/address', encoding='ascii') as handle:
+                result.add(handle.read(64).strip().lower())
+        return result or None
+    except (OSError, UnicodeError):
+        return None
+
+
+def can_wake(device, own_macs):
+    mac = device.get('mac')
+    return (
+        isinstance(mac, str)
+        and re.fullmatch(r'[0-9a-f]{2}(:[0-9a-f]{2}){5}', mac) is not None
+        and own_macs is not None
+        and mac not in own_macs
+        and device.get('protected') is not True
+        and device.get('role') not in ('router', 'self', 'pi')
+    )
+
+
 def snapshot(data, now=None):
     """Allowlist fields; the observation date belongs to discovery, not HTTP refresh."""
     now = time.time() if now is None else now
@@ -47,6 +76,7 @@ def snapshot(data, now=None):
         else 'stale'
     )
     devices, sources = [], []
+    own_macs = local_macs()
     seen = set()
     source = data.get('devices')
     for device in (source if isinstance(source, list) else [])[:256]:
@@ -79,6 +109,7 @@ def snapshot(data, now=None):
                 # First seen in the last 24 h (new-device alert); the MAC itself stays server-side.
                 'isNew': device.get('isNew') is True,
                 'canRename': device.get('canRename') is True,
+                'canWake': can_wake(device, own_macs),
             }
         )
         if len(devices) == MAX_DEVICES:

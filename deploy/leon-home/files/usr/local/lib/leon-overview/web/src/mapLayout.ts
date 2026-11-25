@@ -1,4 +1,5 @@
 import type { Device } from './contracts.js';
+import { t } from './i18n/index.js';
 
 /** Branches follow the connection type the router reports; nothing is inferred from names. */
 export type Group = 'wired' | 'fast' | 'slow' | 'wireless' | 'unknown';
@@ -8,7 +9,7 @@ export const GROUP_NAMES = {
   fast: 'Wi-Fi 5 GHz',
   slow: 'Wi-Fi 2.4 GHz',
   wireless: 'Wi-Fi',
-  unknown: 'Connection not reported',
+  unknown: t('Connection not reported'),
 } satisfies Record<Group, string>;
 
 export function groupOf(device: Device): Group {

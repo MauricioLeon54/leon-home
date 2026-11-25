@@ -1,0 +1,10 @@
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+.banner {
+  margin: 0 0 8px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #{color('warn')} 40%, transparent);
+  border-radius: var(--radius-m);
+  font-size: var(--text-s);
+}

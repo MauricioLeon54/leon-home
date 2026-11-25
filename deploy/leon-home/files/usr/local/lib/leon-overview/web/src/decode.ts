@@ -47,3 +47,28 @@ export function address(value: unknown): string {
   if (parts.length !== 4 || parts.some(part => !/^(0|[1-9]\d{0,2})$/.test(part) || Number(part) > 255)) throw new Error('Invalid IPv4 address');
   return text;
 }
+
+// Strict parsers for view models: wrong types throw, null/undefined numbers stay null (unknown).
+export function number(value: unknown, minimum: number, maximum: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) throw new Error('Invalid number');
+  return value;
+}
+export function nullableNumber(value: unknown, minimum: number, maximum: number): number | null {
+  return value === null || value === undefined ? null : number(value, minimum, maximum);
+}
+export function boolean(value: unknown): boolean {
+  const result = optionalBoolean(value);
+  if (result === null) throw new Error('Missing boolean');
+  return result;
+}
+export function oneOf<T extends string>(value: unknown, allowed: ReadonlyArray<T>): T {
+  const found = allowed.find(item => item === value);
+  if (found === undefined) throw new Error('Invalid choice');
+  return found;
+}
+export function items<T>(value: unknown, maximum: number, parse: (item: unknown) => T): Array<T> {
+  return list(value, maximum).map(parse);
+}
+export function nullable<T>(value: unknown, parse: (item: unknown) => T): T | null {
+  return value === null || value === undefined ? null : parse(value);
+}

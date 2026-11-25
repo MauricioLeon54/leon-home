@@ -2,7 +2,7 @@
 
 :root {
   color-scheme: dark;
-  @each $group in ($colors, $type, $radii, $durations, $easings, $distances, $scales, $blurs) {
+  @each $group in ($colors, $type, $radii, $durations, $easings, $distances, $scales, $blurs, $layout) {
     @each $name, $value in $group {
       --#{$name}: #{$value};
     }

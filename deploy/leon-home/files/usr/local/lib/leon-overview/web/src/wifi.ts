@@ -1,16 +1,17 @@
 import type { Device, Traffic, ViewContext } from './contracts.js';
+import { t } from './i18n/index.js';
 import { hasKey } from './presentation.js';
 import { $, text, time } from './presentation.js';
 export function bandName(band: string | null | undefined) {
-  const labels = { '2.4GHz': '2.4 GHz', '5GHz': '5 GHz', '5GHz_1': '5 GHz (1)', '5GHz_2': '5 GHz (2)', 'DC': 'Dual band', 'wifi7-mld': 'Wi-Fi 7 multi-link' };
-  return band && hasKey(labels, band) ? labels[band] : 'Unknown';
+  const labels = { '2.4GHz': t('2.4 GHz'), '5GHz': '5 GHz', '5GHz_1': '5 GHz (1)', '5GHz_2': '5 GHz (2)', 'DC': t('Dual band'), 'wifi7-mld': t('Wi-Fi 7 multi-link') };
+  return band && hasKey(labels, band) ? labels[band] : t('Unknown');
 }
 function signalLevel(dbm: number | null | undefined) {
   return typeof dbm !== 'number' ? null : dbm >= -60 ? 'good' : dbm >= -70 ? 'ok' : 'weak';
 }
 export function signalText(dbm: number | null | undefined) {
   const level = signalLevel(dbm);
-  return level ? `${dbm} dBm · ${{ good: 'good', ok: 'fair', weak: 'weak' }[level]}` : 'No reading';
+  return level ? `${dbm} dBm · ${{ good: t('good'), ok: t('fair'), weak: t('weak') }[level]}` : t('No reading');
 }
 function bars(dbm: number | null | undefined) {
   const level = signalLevel(dbm),
@@ -33,9 +34,9 @@ export function createWifiView({ getState, trafficCurrent }: ViewContext) {
     const box = $('#wifi'),
       wifi = state.routerTelemetry.wifi;
     box.replaceChildren();
-    $('#wifi-at').textContent = trafficCurrent() ? 'Router, ' + time(state.routerTelemetry.observedAt) : 'No current reading';
+    $('#wifi-at').textContent = trafficCurrent() ? 'Router, ' + time(state.routerTelemetry.observedAt) : t('No current reading');
     if (!trafficCurrent()) {
-      box.append(text('p', 'No current Wi-Fi reading. Unlock the router session to see readings.', 'muted small'));
+      box.append(text('p', t('No current Wi-Fi reading. Unlock the router session to see readings.'), 'muted small'));
       return;
     }
     // One row per broadcast network: name and band first, channel and current devices as detail.
@@ -50,28 +51,28 @@ export function createWifiView({ getState, trafficCurrent }: ViewContext) {
     };
     for (const network of wifi?.networks || []) {
       if (!network.ssid) continue;
-      const band = bandName(network.band) !== 'Unknown' ? bandName(network.band) : network.band || 'Unknown band';
+      const band = bandName(network.band) !== t('Unknown') ? bandName(network.band) : network.band || t('Unknown band');
       // Counted from the router's own device list (devices on that band now), not its configured limits.
       const onBand = state.devices.filter(device => device.traffic?.band && String(device.traffic.band).startsWith(String(network.band).slice(0, 3))).length;
       const off = network.WifiEnable === false;
       networkRow(
         network.ssid + ', ' + band,
-        off ? 'Turned off' : (network.Channel ? 'Channel ' + network.Channel : 'Automatic channel') + ' · ' + onBand + (onBand === 1 ? ' device' : ' devices'),
-        off ? 'Off' : 'On',
+        off ? t('Turned off') : (network.Channel ? t('Channel ') + network.Channel : t('Automatic channel')) + ' · ' + onBand + (onBand === 1 ? t(' device') : t(' devices')),
+        off ? t('Off') : t('On'),
         !off
       );
     }
     const guest = wifi?.guest;
     if (guest) {
       const minutes = typeof guest.restSeconds === 'number' ? Math.round(guest.restSeconds / 60) : null;
-      const left = minutes === null ? 'No time limit reported' : minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min left` : `${minutes} min left`;
-      networkRow('Guest network' + (guest.ssid ? ', ' + guest.ssid : ''), guest.enabled ? left : 'Turned off', guest.enabled ? 'On' : 'Off', guest.enabled);
+      const left = minutes === null ? t('No time limit reported') : minutes >= 60 ? t('{0} h {1} min left', Math.floor(minutes / 60), minutes % 60) : t('{0} min left', minutes);
+      networkRow(t('Guest network') + (guest.ssid ? ', ' + guest.ssid : ''), guest.enabled ? left : t('Turned off'), guest.enabled ? t('On') : t('Off'), guest.enabled);
     }
     if (networks.childElementCount) box.append(networks);
     // Weakest first: the devices worth moving closer or switching band.
     const devices = state.devices.filter((device): device is Device & { traffic: Traffic } => Boolean(device.traffic?.band)).sort((a, b) => (a.traffic.signalDbm ?? 0) - (b.traffic.signalDbm ?? 0));
     if (!devices.length) {
-      box.append(text('p', 'The router does not report any active Wi-Fi devices.', 'muted small'));
+      box.append(text('p', t('The router does not report any active Wi-Fi devices.'), 'muted small'));
       return;
     }
     const list = document.createElement('ul');

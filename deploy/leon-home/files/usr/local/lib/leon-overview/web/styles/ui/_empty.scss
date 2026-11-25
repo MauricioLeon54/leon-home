@@ -1,0 +1,15 @@
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+.empty {
+  padding: 32px 16px;
+  text-align: center;
+}
+.empty-title {
+  font-weight: 600;
+}
+.empty-detail {
+  margin-top: 4px;
+  color: color('ash');
+  font-size: var(--text-s);
+}

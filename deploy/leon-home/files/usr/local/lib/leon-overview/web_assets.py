@@ -3,13 +3,20 @@
 from pathlib import Path
 
 DIRECTORY = Path(__file__).with_name('web') / 'dist'
-MAX_BYTES = 128_000
+MAX_BYTES = 262_144
 ASSETS = {
     '/network-map/assets/' + name: (
         name,
         'text/css' if name.endswith('.css') else 'text/javascript',
     )
-    for name in ('app.js', 'home.js', 'network-map.css', 'home.css', 'updates.js', 'updates.css')
+    for name in (
+        'home.css',
+        'updates.js',
+        'updates.css',
+        'leon.js',
+        'leon.css',
+        'serviceWorker.js',
+    )
 }
 
 

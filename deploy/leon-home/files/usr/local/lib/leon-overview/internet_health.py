@@ -1,6 +1,6 @@
 """Internet health history from the overview's 30 s checks: availability, latency and outages.
 
-Each sample is [time, routerOk, routerMs, internetMs, dnsMs]. Internet is up when the TCP probe to
+Each sample is [time, routerOk, routerMs, internetMs, dnsMs, routerLossPercent]. Internet is up when the TCP probe to
 1.1.1.1 or 9.9.9.9 answered. When it did not, the router ping decides the likely cause: router
 reachable means the provider or modem ("provider"), router unreachable means the home network
 ("home"). A sampling gap (overview restart) is unknown time, never an outage.
@@ -14,6 +14,7 @@ KEEP_SECONDS = 86400
 MAX_SAMPLES = 3000  # 24 h at 30 s, plus slack
 GAP_SECONDS = 120  # longer silences are gaps, not outages
 MIN_OUTAGE_SAMPLES = 2  # a single failed probe is a blip
+BUCKET_SECONDS = 900
 SERIES_POINTS = 96  # 15-minute buckets over 24 h
 
 
@@ -40,6 +41,7 @@ def sample_row(internet, at):
         number(router.get('averageMs')),
         number(internet.get('internetMs')),
         number(internet.get('dnsMs')),
+        number(loss) if isinstance(loss, (int, float)) and 0 <= loss <= 100 else None,
     ]
 
 
@@ -86,7 +88,7 @@ def summary(rows, now):
     up = sum(1 for row in rows if state(row) == 'up')
     buckets = {}
     for row in rows:
-        buckets.setdefault(int(row[0] // 900) * 900, []).append(row)
+        buckets.setdefault(row[0] // BUCKET_SECONDS * BUCKET_SECONDS, []).append(row)
     series = []
     for start in sorted(buckets)[-SERIES_POINTS:]:
         bucket = buckets[start]
@@ -98,6 +100,20 @@ def summary(rows, now):
                 round(100 * sum(1 for row in bucket if state(row) == 'up') / len(bucket)),
             ]
         )
+    latest_bucket = int(now // BUCKET_SECONDS) * BUCKET_SECONDS
+    first_bucket = latest_bucket - (SERIES_POINTS - 1) * BUCKET_SECONDS
+
+    def aligned_average(column):
+        averages = []
+        for start in range(first_bucket, latest_bucket + 1, BUCKET_SECONDS):
+            readings = [
+                row[column]
+                for row in buckets.get(start, ())
+                if len(row) > column and row[column] is not None
+            ]
+            averages.append(round(sum(readings) / len(readings), 1) if readings else None)
+        return averages
+
     last = rows[-1]
     return {
         'samples': len(rows),
@@ -108,10 +124,14 @@ def summary(rows, now):
             'routerMs': last[2],
             'internetMs': last[3],
             'dnsMs': last[4],
+            'routerLossPercent': last[5] if len(last) == 6 else None,
         }
         if now - last[0] <= GAP_SECONDS
         else None,
         'series': series,
+        'routerLossSeries': aligned_average(5),
+        'internetLatencySeries': aligned_average(3),
+        'dnsLatencySeries': aligned_average(4),
         'outages': outages(rows)[-10:],
     }
 
@@ -126,7 +146,7 @@ def load(path, now):
         row
         for row in (rows if isinstance(rows, list) else [])
         if isinstance(row, list)
-        and len(row) == 5
+        and len(row) in (5, 6)
         and isinstance(row[0], int)
         and 0 < now - row[0] <= KEEP_SECONDS
         and isinstance(row[1], bool)

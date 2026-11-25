@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LEÓN Home overview: a server-rendered status page for the owner's phone on the tailnet.
+"""LEÓN Home overview: an authenticated phone app on the tailnet.
 
 Listens on 127.0.0.1 only; Tailscale Serve publishes it over HTTPS at `/` of the node's ts.net
 name. Requests without Tailscale Serve's identity header, or from a login not in OWNER_LOGINS, get
@@ -7,8 +7,8 @@ name. Requests without Tailscale Serve's identity header, or from a login not in
 password, `tailscale status`, internet health, backups, Git), so pages render instantly.
 
 Actions carry an HMAC token bound to the login; equipment operations retain their additional
-target and policy checks. Values are escaped; nonce-authorized compiled modules refresh the
-page only while visible. The Pi serves prebuilt assets without a JavaScript toolchain.
+target and policy checks. Nonce-authorized compiled modules refresh readings only while visible.
+The Pi serves prebuilt assets without a JavaScript toolchain.
 """
 
 import base64
@@ -17,11 +17,11 @@ import collections
 import configparser
 import hashlib
 import hmac
-import html
 import http.client
 import http.server
 import ipaddress
 import json
+import math
 import mimetypes
 import os
 import re
@@ -106,9 +106,34 @@ SUMMARY_FRESH_SECONDS = 300
 REPORT_FRESH_SECONDS = 900
 SAMPLE_SECONDS = 30
 TEMPERATURE_EVERY = 300
-PAUSE_CHOICES = {'300': '5 min', '1800': '30 min'}
+# Keep synchronized with web/src/routes.ts; /index.html is the Home alias.
+APP_ROUTES = frozenset(
+    {
+        '/',
+        '/index.html',
+        '/network',
+        '/network/device/:id',
+        '/network-map',
+        '/storage',
+        '/storage/files',
+        '/storage/guide',
+        '/storage/automation',
+        '/automation',
+        '/settings',
+        '/settings/about',
+        '/settings/raspberry',
+        '/settings/raspberry/lights',
+        '/settings/raspberry/usb',
+        '/settings/raspberry/radios',
+        '/settings/raspberry/performance',
+        '/settings/raspberry/power',
+        '/settings/dns',
+    }
+)
 TOKEN_SECONDS = 3600
 SECRET = os.urandom(32)
+VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'VERSION')
+VERSION = re.compile(r'[A-Za-z0-9][A-Za-z0-9 .+-]{0,39}')
 UNIT_LABELS = {
     'pihole-FTL': 'Pi-hole',
     'unbound': 'Encrypted DNS',
@@ -119,6 +144,11 @@ UNIT_LABELS = {
     'leon-backup.timer': 'Encrypted backup',
     'leon-overview': 'This panel',
     'unattended-upgrades': 'Updates',
+    'ntfy': 'Notifications',
+    'smbd': 'File sharing',
+    'leon-router': 'Router monitor',
+    'leon-n8n': 'Automation',
+    'leon-overview-redirect': 'Short address',
 }
 ASSETS = {
     '/brand/symbol.png': 'symbol-web.png',
@@ -149,6 +179,8 @@ MANIFEST = json.dumps(
 
 _lock = threading.Lock()
 _names_lock = threading.Lock()
+_wake_lock = threading.Lock()
+_wake_sent = {}
 _data = {}
 _temperatures = collections.deque(maxlen=288)
 INTERNET_STATE = os.path.join(
@@ -658,7 +690,9 @@ def token(login, now=None):
 
 
 def token_valid(login, value):
-    stamp, _, mac = (value or '').partition('.')
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]{1,12}\.[0-9a-f]{64}', value):
+        return False
+    stamp, _, mac = value.partition('.')
     if not stamp.isdigit() or abs(time.time() - int(stamp)) > TOKEN_SECONDS:
         return False
     expected = hmac.new(SECRET, f'{login}|{stamp}'.encode(), hashlib.sha256).hexdigest()
@@ -667,25 +701,16 @@ def token_valid(login, value):
 
 def set_blocking(enabled, seconds=None):
     with PiHole() as api:
-        state = api.call('POST', '/api/dns/blocking', {'blocking': enabled, 'timer': seconds})
-    with _lock:
-        if _data.get('dns'):
-            _data['dns'] = {
-                **_data['dns'],
-                'blocking': state.get('blocking'),
-                'timer': state.get('timer'),
-            }
+        api.call('POST', '/api/dns/blocking', {'blocking': enabled, 'timer': seconds})
 
 
-# ---------------------------------------------------------------- rendering
-
-e = html.escape
+# ---------------------------------------------------------------- presentation data
 
 
-def ago(stamp):
+def ago(stamp, *, now=None):
     if not stamp:
         return '—'
-    seconds = max(0, time.time() - stamp)
+    seconds = max(0, (time.time() if now is None else now) - stamp)
     if seconds < 90:
         return 'now'
     if seconds < 3600:
@@ -695,13 +720,6 @@ def ago(stamp):
     return f'{int(seconds // 86400)} d ago'
 
 
-def duration(seconds):
-    if seconds is None:
-        return '—'
-    days, rest = divmod(int(seconds), 86400)
-    return f'{days} d {rest // 3600} h' if days else f'{rest // 3600} h {rest % 3600 // 60} min'
-
-
 def size(value):
     if value is None:
         return '—'
@@ -709,10 +727,6 @@ def size(value):
         if value >= scale:
             return f'{value / scale:.1f} {unit}'
     return f'{value} B'
-
-
-def number(value):
-    return f'{value:,}'.replace(',', ' ') if isinstance(value, int) else '—'
 
 
 def ms(value):
@@ -765,46 +779,6 @@ def problems(data):
     return found
 
 
-def reading(value, label, tone=''):
-    return f'<div class="reading {tone}"><b>{e(value)}</b><span>{e(label)}</span></div>'
-
-
-CHEVRON = (
-    '<span class="t-acc-chevron" aria-hidden="true">'
-    '<svg viewBox="0 0 16 16"><path d="M4 6.5 8 10.5 12 6.5"/></svg></span>'
-)
-
-
-def disclosure(key, title, summary, body, tone='', nested=False):
-    """Collapsed detail; home.ts opens it and keeps it open across refreshes."""
-    return (
-        f'<section class="{"t-acc nested" if nested else "section t-acc"}" id="{key}" data-open="false">'
-        f'<button type="button" class="t-acc-head{" quiet" if nested else ""}" aria-expanded="false" '
-        f'aria-controls="{key}-panel"><span class="title">{e(title)}</span>'
-        f'<span class="summary {tone}">{e(summary)}</span>{CHEVRON}</button>'
-        f'<div class="t-acc-panel" id="{key}-panel" inert><div class="t-acc-panel-inner">'
-        f'<div class="t-acc-body">{body}</div></div></div></section>'
-    )
-
-
-def section_head(title, meta='', tone='', link=''):
-    meta_html = f'<span class="meta {tone}">{e(meta)}</span>' if meta else ''
-    return f'<div class="section-head"><h2>{e(title)}</h2>{meta_html}{link}</div>'
-
-
-def panel(key, title, meta, body, tone=''):
-    """A visible section: its head carries the summary, its body the readings."""
-    return f'<section class="section" id="{key}">{section_head(title, meta, tone)}{body}</section>'
-
-
-def row(ok, text, detail='', extra=''):
-    tone = 'ok' if ok is True else ('bad' if ok is False else 'idle')
-    return (
-        f'<li><i class="dot {tone}"></i><span class="grow">{e(text)}</span>{extra}'
-        f'{f"<small>{e(detail)}</small>" if detail else ""}</li>'
-    )
-
-
 OUTREACH_LABELS = {
     'ok': 'active',
     'paused': 'paused',
@@ -817,10 +791,18 @@ OUTREACH_LABELS = {
 DISPLAY_LABELS = {'awake': 'on', 'asleep': 'off', 'dreaming': 'screen saver'}
 
 
-def tablet_summary_rows(stored, now):
+def tablet_row(ok, label, detail=''):
+    return {
+        'tone': 'good' if ok is True else ('warn' if ok is False else 'unknown'),
+        'label': label,
+        'detail': detail,
+    }
+
+
+def tablet_summary_entries(stored, now):
     """Rows for the Mac's published tablet reading. Everything older than the Mac's cadence is dimmed."""
     if not stored:
-        return '', ''
+        return [], ''
     summary = stored['summary']
     current = now - summary.get('observedAt', 0) <= SUMMARY_FRESH_SECONDS
 
@@ -845,32 +827,32 @@ def tablet_summary_rows(stored, now):
             else ''
         )
         low = battery['percent'] < 15 and not battery['pluggedIn']
-        rows.append(row(tone(not low), 'Battery', f'{battery["percent"]}% · {state}{heat}'))
+        rows.append(tablet_row(tone(not low), 'Battery', f'{battery["percent"]}% · {state}{heat}'))
     else:
-        rows.append(row(None, 'Battery', 'no reading (tablet ADB unavailable)'))
+        rows.append(tablet_row(None, 'Battery', 'no reading (tablet ADB unavailable)'))
     if summary.get('display'):
-        rows.append(row(None, 'Display', DISPLAY_LABELS[summary['display']]))
+        rows.append(tablet_row(None, 'Display', DISPLAY_LABELS[summary['display']]))
     else:
-        rows.append(row(None, 'Display', 'no reading'))
+        rows.append(tablet_row(None, 'Display', 'no reading'))
     if summary.get('storageFreePercent') is not None:
         rows.append(
-            row(
+            tablet_row(
                 tone(summary['storageFreePercent'] >= 10),
                 'Free storage',
                 f'{summary["storageFreePercent"]}%',
             )
         )
     if summary.get('memoryAvailablePercent') is not None:
-        rows.append(row(None, 'Available memory', f'{summary["memoryAvailablePercent"]}%'))
+        rows.append(tablet_row(None, 'Available memory', f'{summary["memoryAvailablePercent"]}%'))
     outreach = summary.get('outreach')
     if outreach:
         fresh = now - outreach['checkedAt'] <= REPORT_FRESH_SECONDS
         rows.append(
-            row(
+            tablet_row(
                 tone(fresh and not outreach['needsAttention']),
                 'Outreach',
                 f'{OUTREACH_LABELS[outreach["state"]]} · {outreach["actions24h"]} actions and '
-                f'{outreach["errors24h"]} errors in 24 h · {ago(outreach["checkedAt"])}',
+                f'{outreach["errors24h"]} errors in 24 h · {ago(outreach["checkedAt"], now=now)}',
             )
         )
     trader = summary.get('trader')
@@ -885,125 +867,64 @@ def tablet_summary_rows(stored, now):
         )
         change = f' · {trader["returnPct"]}%' if trader.get('returnPct') is not None else ''
         rows.append(
-            row(
+            tablet_row(
                 tone(fresh and not trader['killSwitch'] and not trader['halted']),
                 'Trader (simulated)',
-                f'{state}{change} · {ago(trader["checkedAt"])}',
+                f'{state}{change} · {ago(trader["checkedAt"], now=now)}',
             )
         )
     age = (
-        f'Read by the Mac {ago(summary["observedAt"])}'
+        f'Read by the Mac {ago(summary["observedAt"], now=now)}'
         if current
-        else f'Stale reading: last read by the Mac {ago(summary["observedAt"])}'
+        else f'Stale reading: last read by the Mac {ago(summary["observedAt"], now=now)}'
     )
-    return ''.join(rows), age
+    return rows, age
 
 
-def tablet_card(peers, name, observed_at, stored=None, now=None):
-    """Reachability of the configured tablet plus the Mac's last reading of it. Unknown stays unknown."""
-    now = now or time.time()
-    detail_rows, age = tablet_summary_rows(stored, now)
+def tablet_view(data, now):
+    """Keep the tablet card's wording and freshness rules in one presentation model."""
+    peers, name = data.get('peers'), data.get('tabletPeer')
+    detail_rows, age = tablet_summary_entries(data.get('tabletSummary'), now)
     if not name and not detail_rows:
-        return ''
-    peer = next((p for p in peers or [] if p['name'] == name), None)
-    summary, tone = 'Last reading only', ''
+        return None
+    peer = next((peer for peer in peers or [] if peer['name'] == name), None)
+    summary, tone, rows = 'Last reading only', 'unknown', []
     if not name:
-        line = ''
+        pass
     elif peers is None:
-        line = row(None, 'Tablet', 'no Tailscale data')
+        rows.append(tablet_row(None, 'Tablet', 'no Tailscale data'))
         summary = 'Unknown'
     elif peer is None:
-        line = row(None, 'Tablet', 'not in the tailnet')
+        rows.append(tablet_row(None, 'Tablet', 'not in the tailnet'))
         summary, tone = 'Not in the tailnet', 'warn'
     elif peer['online']:
-        line = row(
-            True, 'Tablet', 'online · ' + ('direct connection' if peer['direct'] else 'via relay')
-        )
-        summary = 'Online'
-    else:
-        line = row(False, 'Tablet', f'offline · last seen {ago(peer["seen"])}')
-        summary, tone = f'Offline since {ago(peer["seen"])}', 'warn'
-    summary_note = (
-        (
-            f'<p class="note">{e(age)}. These readings become stale if the Mac sleeps or LEÓN Labs is closed.</p>'
-        )
-        if detail_rows
-        else (
-            '<p class="note">Battery, display and services appear when the Mac publishes a reading.</p>'
-        )
-    )
-    body = (
-        f'<ul class="rows">{line}{detail_rows}</ul>'
-        f'<p class="note">Reachability over Tailscale, read {e(ago(observed_at))}. Phone notification after '
-        f'10 minutes offline.</p>{summary_note}'
-    )
-    return panel('tablet', 'Tablet', summary, body, tone)
-
-
-def bars(hours):
-    if not hours:
-        return ''
-    peak = max(total for _, (total, _) in hours) or 1
-    width, gap, height = 10, 3, 64
-    parts = []
-    for index, (hour, (total, blocked)) in enumerate(hours):
-        x = index * (width + gap)
-        h_total = max(1.5, total / peak * height)
-        h_block = blocked / peak * height
-        label = time.strftime('%H:00', time.localtime(hour * 3600))
-        parts.append(
-            f'<g><title>{label} · {total} queries, {blocked} blocked</title>'
-            f'<rect class="total" x="{x}" y="{height - h_total:.1f}" width="{width}" height="{h_total:.1f}" rx="2"/>'
-            f'<rect class="blocked" x="{x}" y="{height - h_block:.1f}" width="{width}" height="{h_block:.1f}" rx="2"/></g>'
-        )
-    first = time.strftime('%H:00', time.localtime(hours[0][0] * 3600))
-    return (
-        f'<svg class="bars" viewBox="0 0 {len(hours) * (width + gap) - gap} {height}" preserveAspectRatio="none" '
-        f'aria-label="Queries per hour">{"".join(parts)}</svg>'
-        f'<div class="axis"><span>{first}</span><span>now</span></div>'
-    )
-
-
-def sparkline(points):
-    if len(points) < 2:
-        return '<p class="muted small">The chart appears after a few minutes of readings.</p>'
-    values = [v for _, v in points]
-    low, high = min(values) - 1, max(values) + 1
-    start, span = points[0][0], (points[-1][0] - points[0][0]) or 1
-    coords = ' '.join(
-        f'{(t - start) / span * 300:.1f},{60 - (v - low) / (high - low) * 56 - 2:.1f}'
-        for t, v in points
-    )
-    return (
-        f'<svg class="spark" viewBox="0 0 300 60" preserveAspectRatio="none" aria-label="Temperature">'
-        f'<polyline points="{coords}"/></svg>'
-        f'<div class="axis"><span>min {min(values):.0f} °C</span><span>max {max(values):.0f} °C</span></div>'
-    )
-
-
-def strip(presence):
-    cells = ''.join(f'<b class="{"on" if p else ""}"></b>' for p in (presence or [])[-16:])
-    return f'<span class="strip" aria-hidden="true">{cells}</span>' if cells else ''
-
-
-def device_rows(devices, baseline):
-    now = time.time()
-    return ''.join(
-        row(
-            True,
-            d.get('label') or d['ip'],
-            d['ip'] if d.get('label') else (ms(d.get('rttMs')) if d.get('rttMs') else ''),
-            (
-                '<em class="badge new">New</em>'
-                if (d.get('firstSeen') or 0) > baseline + 86400 and now - d['firstSeen'] < 86400
-                else ''
+        rows.append(
+            tablet_row(
+                True,
+                'Tablet',
+                'online · ' + ('direct connection' if peer['direct'] else 'via relay'),
             )
-            + ('<em class="badge">Unnamed</em>' if d.get('source') == 'unknown' else '')
-            + ('<em class="badge">Auto</em>' if d.get('source') == 'mdns' else '')
-            + strip(d.get('presence')),
         )
-        for d in devices
+        summary, tone = 'Online', 'good'
+    else:
+        rows.append(
+            tablet_row(False, 'Tablet', f'offline · last seen {ago(peer["seen"], now=now)}')
+        )
+        summary, tone = f'Offline since {ago(peer["seen"], now=now)}', 'warn'
+    note = (
+        f'{age}. These readings become stale if the Mac sleeps or LEÓN Labs is closed.'
+        if detail_rows
+        else 'Battery, display and services appear when the Mac publishes a reading.'
     )
+    return {
+        'summary': summary,
+        'tone': tone,
+        'rows': (rows + detail_rows)[:12],
+        'notes': [
+            f'Reachability over Tailscale, read {ago(data.get("at"), now=now)}. Phone notification after 10 minutes offline.',
+            note,
+        ][:3],
+    }
 
 
 def router_link(devices):
@@ -1015,323 +936,147 @@ def router_link(devices):
         except (ValueError, TypeError):
             continue
         if address.is_private:
-            return (
-                f'<a href="http://{address}/">Router settings<span aria-hidden="true">›</span></a>'
-            )
-    return ''
+            return f'http://{address}/'
+    return None
 
 
-STORAGE_LINK = '<a href="/storage">Drives<span aria-hidden="true">›</span></a>'
-
-
-AUTOMATION_LINK = '<a href="/automation">Automation<span aria-hidden="true">›</span></a>'
-
-
-def render(data, login, nonce, *, show_automation=True):
-    panel_links = STORAGE_LINK + (AUTOMATION_LINK if show_automation else '')
-    if not data:
-        return page(
-            '<section class="overview"><h1 class="status-line"><i class="dot idle"></i>Preparing readings…</h1>'
-            '<p class="facts">The first sample takes a few seconds.</p></section>'
-            '<nav class="section links" aria-label="Other panels">' + panel_links + '</nav>',
-            nonce,
-        )
-    snapshot, host, dns = data.get('snapshot') or {}, data.get('host') or {}, data.get('dns')
-    issues = problems(data)
-    units = host.get('units', [])
-    running = sum(u['state'] in ('active', 'reloading') for u in units)
-    temperature = host.get('temperatureCelsius')
-
-    # 1. What is happening: one sentence, then only the issues that need attention.
-    headline = (
-        'Everything is running'
-        if not issues
-        else (
-            'One thing needs attention'
-            if len(issues) == 1
-            else f'{len(issues)} things need attention'
-        )
-    )
-    facts = [
-        f'Up {duration(snapshot.get("uptimeSeconds"))}' if snapshot.get('uptimeSeconds') else '',
-        f'{running} of {len(units)} services running' if units else '',
-        f'{temperature:.0f} °C' if temperature is not None else '',
-    ]
-    overview_html = (
-        f'<section class="overview{" attention" if issues else ""}">'
-        f'<h1 class="status-line"><i class="dot {"bad" if issues else "ok"}"></i>{e(headline)}</h1>'
-        + (
-            '<ul class="rows issues">' + ''.join(row(False, issue) for issue in issues) + '</ul>'
-            if issues
-            else ''
-        )
-        + '<p class="facts">'
-        + ''.join(f'<span>{e(fact)}</span>' for fact in facts if fact)
-        + '</p>'
-        + (
-            '<nav class="automation-actions home-shortcuts" aria-label="Quick access">'
-            '<a class="automation-action" href="/automation">Automation</a>'
-            '<a class="automation-action" href="/storage">Storage</a></nav>'
-            if show_automation
-            else ''
-        )
-        + '</section>'
-    )
-
-    internet = data.get('internet') or {}
+def home_view(data, *, now=None):
+    """The bounded HomeView wire contract, from the same sampler snapshot as the map."""
+    now = time.time() if now is None else now
+    snapshot, host = data.get('snapshot') or {}, data.get('host') or {}
+    dns, internet = data.get('dns'), data.get('internet') or {}
     router = internet.get('router') or {}
     router_ms = router.get('averageMs') if isinstance(router, dict) else None
-    offline = bool(internet) and internet.get('internetMs') is None
-
-    def measured(value, label, missing='unknown'):
-        return reading(ms(value), label, '' if value is not None else missing)
-
-    net_html = (
-        '<section class="section" id="internet">'
-        + section_head(
-            'Internet',
-            'No connection' if offline else ('Connected' if internet else 'No reading'),
-            'warn' if offline else ('good' if internet else ''),
-        )
-        + '<div class="readings">'
-        + (
-            reading('Offline', 'Internet', 'warn')
-            if offline
-            else measured(internet.get('internetMs'), 'Internet')
-        )
-        + measured(router_ms, 'Router')
-        + measured(internet.get('dnsMs'), 'Router DNS')
-        + measured(dns.get('upstreamMs') if dns else None, 'Encrypted DNS')
-        + '</div><p class="note">Round-trip times measured by the Pi.</p></section>'
-    )
-
-    # 2. What I can do: Pi-hole is the one control on this page.
-    if dns:
-        paused = dns.get('blocking') != 'enabled'
-        timer = dns.get('timer')
-        state = (
-            'Blocking on'
-            if not paused
-            else f'Paused · {int(timer // 60)} min left'
-            if timer
-            else 'Blocking paused'
-        )
-        controls = (
-            ''.join(
-                f'<form method="post" action="/action/pause"><input type="hidden" name="t" value="{e(token(login))}">'
-                f'<input type="hidden" name="s" value="{seconds}"><button>Pause {label}</button></form>'
-                for seconds, label in PAUSE_CHOICES.items()
-            )
-            if not paused
-            else (
-                f'<form method="post" action="/action/resume"><input type="hidden" name="t" value="{e(token(login))}">'
-                f'<button class="primary">Resume blocking</button></form>'
-            )
-        )
-        tops = (
-            '<div class="columns"><div><h3>Most blocked domains</h3><ul class="rows">'
-            + ''.join(row(None, domain, number(count)) for domain, count in dns['topBlocked'])
-            + '</ul></div><div><h3>Most active clients</h3><ul class="rows">'
-            + ''.join(row(True, name, number(count)) for name, count in dns['topClients'])
-            + '</ul></div></div>'
-        )
-        dns_html = (
-            '<section class="section" id="pihole">'
-            + section_head('Pi-hole', state, 'warn' if paused else 'good')
-            + '<div class="readings three">'
-            + reading(f'{dns["percent"]:.1f}%', 'Blocked today')
-            + reading(number(dns['queries']), 'Queries')
-            + reading(number(dns['blocked']), 'Blocked')
-            + '</div><div class="chart-block"><div class="legend"><span><i class="sw total"></i>Queries</span>'
-            '<span><i class="sw blocked"></i>Blocked</span><span class="span">Last 24 hours</span></div>'
-            + bars(dns['hours'])
-            + f'</div><div class="control"><div class="buttons">{controls}</div>'
-            f'<p class="small muted">{number(dns["gravity"])} domains on blocklists, '
-            f'{dns["clients"]} active clients</p></div>' + tops + '</section>'
-        )
-    else:
-        dns_html = (
-            '<section class="section" id="pihole">'
-            + section_head('Pi-hole', 'No reading', 'warn')
-            + '<p class="note">Pi-hole did not answer. Its blocking state is unknown until it does.</p></section>'
-        )
-
+    units = host.get('units', [])
     devices = data.get('devices', [])
-    online = [d for d in devices if d.get('online')]
-    baseline = min((d.get('firstSeen') or time.time() for d in devices), default=time.time())
-    shown, rest = online[:6], online[6:40]
+    online = [device for device in devices if device.get('online')]
+    baseline = min((device.get('firstSeen') or now for device in devices), default=now)
     naming = data.get('naming') or {}
-    moves = [m for m in naming.get('moves', []) if time.time() - m.get('at', 0) < 7 * 86400][-3:]
-    move_text = ''.join(
-        f'<p class="note">{e(m["name"])} moved from {e(m["from"])} to {e(m["to"])}, {e(ago(m["at"]))}.</p>'
-        for m in reversed(moves)
-    )
-    home_html = (
-        '<section class="section" id="home-network">'
-        + section_head(
-            'Home network',
-            f'{len(online)} online',
-            link='<a class="head-link" href="/network-map#map">Map</a>',
-        )
-        + f'<ul class="rows">{device_rows(shown, baseline) or row(None, "No inventory yet")}</ul>'
-        + (
-            disclosure(
-                'home-network-all',
-                f'Show {len(rest)} more',
-                '',
-                f'<ul class="rows">{device_rows(rest, baseline)}</ul>',
-                nested=True,
-            )
-            if rest
-            else ''
-        )
-        + f'<p class="note">Names follow MAC addresses, even when IP addresses change. '
-        f'{naming.get("registered", 0)} registered.</p>{move_text}</section>'
-    )
-
-    # 3. Health of the Pi and its services, then the rest of the home; long lists stay collapsed.
-    hot = (temperature or 0) >= 70
-    power, power_warning = power_reading(host)
-    pi_html = panel(
-        'pi',
-        'Raspberry Pi',
-        ' · '.join(
-            part
-            for part in (
-                f'{temperature:.0f} °C' if temperature is not None else '',
-                f'{host["cpuPercent"]:.0f}% CPU' if host.get('cpuPercent') is not None else '',
-                'restart needed' if host.get('rebootRequired') else '',
-            )
-            if part
-        )
-        or 'No reading',
-        '<div class="readings six">'
-        + reading(
-            f'{temperature:.0f} °C' if temperature is not None else '—',
-            'Temperature',
-            'warn' if hot else '',
-        )
-        + reading(
-            f'{host["cpuPercent"]:.0f}%' if host.get('cpuPercent') is not None else '—', 'CPU'
-        )
-        + reading(f'{host["load1"]:.2f}' if host.get('load1') is not None else '—', 'Load')
-        + reading(size(snapshot.get('memoryAvailableBytes')), 'Free memory')
-        + reading(size(snapshot.get('storageFreeBytes')), 'Free storage')
-        + reading(power, 'Power', 'warn' if power_warning else '')
-        + '</div><h3>Temperature, last 24 hours</h3>'
-        + sparkline(list(_temperatures))
-        + (
-            '<p class="note">Restart needed after system updates.</p>'
-            if host.get('rebootRequired')
-            else ''
-        ),
-        'warn' if hot or host.get('rebootRequired') else '',
-    )
-    stopped = len(units) - running
-    services_html = panel(
-        'services',
-        'Services',
-        f'{stopped} stopped'
-        if stopped
-        else (f'All {len(units)} running' if units else 'No reading'),
-        '<ul class="rows services">'
-        + ''.join(
-            row(
-                u['state'] in ('active', 'reloading'),
-                UNIT_LABELS.get(u['name'], u['name']),
-                'running' if u['state'] in ('active', 'reloading') else u['state'],
-            )
-            for u in units
-        )
-        + '</ul>',
-        'warn' if stopped else '',
-    )
-
-    peers = data.get('peers') or []
-    peer_rows = ''.join(
-        row(
-            p['online'],
-            p['name'],
-            (p['os'] + (' · direct' if p['direct'] else ' · relay'))
-            if p['online']
-            else f'{p["os"]} · {ago(p["seen"])}',
-        )
-        for p in peers
-    )
-    tail_html = panel(
-        'tailscale',
-        'Tailscale',
-        f'{sum(p["online"] for p in peers)} of {len(peers)} online' if peers else 'No reading',
-        f'<ul class="rows">{peer_rows or row(None, "No data")}</ul>',
-    )
-
-    backup = data.get('backups')
-    repos = data.get('repos') or []
-    backup_fresh = bool(backup) and (time.time() - backup['at']) < 36 * 3600
-    backup_row = (
-        row(
-            backup_fresh,
-            'Encrypted backup',
-            f'{ago(backup["at"])} · {size(backup["bytes"])} · {backup["count"]} copies',
-        )
-        if backup
-        else row(False, 'Encrypted backup', 'no backups')
-    )
-    repo_rows = ''.join(row(True, r['name'], f'{r["branch"]} · {ago(r["at"])}') for r in repos)
-    safe_html = panel(
-        'backups',
-        'Backups and source',
-        f'Last backup {ago(backup["at"])}' if backup else 'No backups',
-        f'<ul class="rows">{backup_row}{repo_rows}</ul>',
-        '' if backup_fresh else 'warn',
-    )
-
-    links = (
-        '<nav class="section links" aria-label="Other panels">'
-        + ('' if show_automation else STORAGE_LINK)
-        + '<a href="/admin/">Pi-hole admin<span aria-hidden="true">›</span></a>'
-        + router_link(data.get('devices'))
-        + '</nav>'
-    )
-
-    body = (
-        overview_html
-        + net_html
-        + dns_html
-        + f'<div class="pair">{pi_html}{services_html}</div>'
-        + home_html
-        + f'<div class="pair">{tail_html}{safe_html}</div>'
-        + tablet_card(
-            data.get('peers'), data.get('tabletPeer'), data.get('at'), data.get('tabletSummary')
-        )
-        + links
-        + '<footer>Private to your Tailscale account.</footer>'
-    )
-    return page(body, nonce, data.get('at'))
+    moves = [move for move in naming.get('moves', []) if now - move.get('at', 0) < 7 * 86400][-3:]
+    power, attention = power_reading(host)
+    backup, peers = data.get('backups'), data.get('peers')
+    return {
+        'observedAt': data.get('at'),
+        'status': {
+            'issues': problems(data)[:32],
+            'uptimeSeconds': snapshot.get('uptimeSeconds'),
+            'servicesRunning': sum(unit['state'] in ('active', 'reloading') for unit in units)
+            if units
+            else None,
+            'servicesTotal': len(units) if units else None,
+            'temperatureCelsius': host.get('temperatureCelsius'),
+        },
+        'internet': {
+            'state': ('offline' if internet.get('internetMs') is None else 'connected')
+            if internet
+            else 'unknown',
+            'internetMs': internet.get('internetMs'),
+            'routerMs': router_ms,
+            'routerDnsMs': internet.get('dnsMs'),
+            'encryptedDnsMs': dns.get('upstreamMs') if dns else None,
+        },
+        'pihole': {
+            'blocking': 'enabled' if dns.get('blocking') == 'enabled' else 'paused',
+            'pausedSecondsLeft': dns.get('timer'),
+            'percentBlocked': dns['percent'],
+            'queries': dns['queries'],
+            'blocked': dns['blocked'],
+            'domainsOnBlocklists': dns['gravity'],
+            'activeClients': dns['clients'],
+            'hours': [
+                {'hourStart': hour * 3600, 'total': total, 'blocked': blocked}
+                for hour, (total, blocked) in dns['hours'][-24:]
+            ],
+            'topBlocked': [{'name': name, 'count': count} for name, count in dns['topBlocked'][:6]],
+            'topClients': [{'name': name, 'count': count} for name, count in dns['topClients'][:6]],
+        }
+        if dns
+        else None,
+        'pi': {
+            'temperatureCelsius': host.get('temperatureCelsius'),
+            'cpuPercent': host.get('cpuPercent'),
+            'load1': host.get('load1'),
+            'memoryAvailableBytes': snapshot.get('memoryAvailableBytes'),
+            'storageFreeBytes': snapshot.get('storageFreeBytes'),
+            'power': {'label': power, 'needsAttention': attention},
+            'rebootRequired': bool(host.get('rebootRequired')),
+            'temperatureHistory': [list(point) for point in list(_temperatures)[-300:]],
+        },
+        'services': [
+            {
+                'name': unit['name'],
+                'label': UNIT_LABELS.get(unit['name'], unit['name']),
+                'running': unit['state'] in ('active', 'reloading'),
+                'state': unit['state'],
+            }
+            for unit in units[:64]
+        ],
+        'network': {
+            'online': len(online),
+            'devices': [
+                {
+                    'name': device.get('label') or device['ip'],
+                    'address': device['ip'],
+                    'detail': device['ip']
+                    if device.get('label')
+                    else (ms(device.get('rttMs')) if device.get('rttMs') else ''),
+                    'isNew': (device.get('firstSeen') or 0) > baseline + 86400
+                    and now - device['firstSeen'] < 86400,
+                    'isUnnamed': device.get('source') == 'unknown',
+                    'isAuto': device.get('source') == 'mdns',
+                    'presence': [bool(value) for value in (device.get('presence') or [])[-16:]],
+                }
+                for device in online[:40]
+            ],
+            'registeredNames': naming.get('registered', 0),
+            'moves': [
+                {key: move[key] for key in ('name', 'from', 'to', 'at')} for move in reversed(moves)
+            ],
+        },
+        'tailscale': [
+            {
+                'name': peer['name'],
+                'os': peer['os'],
+                'online': peer['online'],
+                'direct': peer['direct'],
+                'lastSeen': peer.get('seen'),
+            }
+            for peer in peers[:64]
+        ]
+        if peers is not None
+        else None,
+        'backups': {
+            'latest': {key: backup[key] for key in ('at', 'bytes', 'count')} if backup else None,
+            'isFresh': bool(backup) and now - backup['at'] < 36 * 3600,
+            'repositories': [
+                {key: repo[key] for key in ('name', 'branch', 'at')}
+                for repo in (data.get('repos') or [])[:32]
+            ],
+        },
+        'tablet': tablet_view(data, now),
+        'links': {'piholeAdmin': '/admin/', 'routerSettings': router_link(devices)},
+    }
 
 
-TABS = (
-    ('home', '/', 'Home', 'M3 11 12 4l9 7v9h-6v-6H9v6H3z'),
-    (
-        'map',
-        '/network-map#map',
-        'Network',
-        'M12 3a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM5 15a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm14 0a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM12 9v3m0 0-5 4m5-4 5 4',
-    ),
-    ('traffic', '/network-map#traffic', 'Traffic', 'M3 17l5-6 4 3 6-8 3 3M3 21h18'),
-    ('ports', '/network-map#ports', 'Ports', 'M4 6h16v12H4zM8 10h2v4H8zm6 0h2v4h-2z'),
-)
+def installed_version():
+    """The version written beside this file when the panel was deployed; None when unknown."""
+    try:
+        with open(VERSION_FILE, encoding='utf-8') as handle:
+            value = handle.read(41).strip()
+    except (OSError, ValueError):
+        return None
+    return value if VERSION.fullmatch(value) else None
 
 
-def tab_bar(active):
-    """Shared bottom navigation; network-map.html carries the same markup for its views."""
-    current = ' aria-current="page"'
-    links = ''.join(
-        f'<a href="{href}" data-tab="{key}"{current if key == active else ""}>'
-        f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{icon}"/></svg><span>{label}</span></a>'
-        for key, href, label, icon in TABS
-    )
-    return f'<nav class="tabbar" aria-label="Sections">{links}</nav>'
+def session_view(login, *, automation, updates, version=None, available=None):
+    return {
+        'login': login,
+        'node': socket.gethostname().split('.')[0],
+        'actionToken': token(login),
+        'version': version,
+        'availableVersion': available,
+        'features': {'automation': automation, 'storage': True, 'updates': updates},
+    }
 
 
 OFFLINE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -1339,8 +1084,8 @@ OFFLINE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>LEÓN Home</title><style>body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#0e0e0e;color:#eeeae3;
 font:15px/1.5 -apple-system,system-ui,sans-serif;text-align:center;padding:24px}img{width:64px;height:64px}p{color:#a39e94;max-width:300px}
 a{display:inline-block;margin-top:12px;color:#111;background:#eeeae3;border-radius:999px;padding:10px 18px;text-decoration:none}</style></head>
-<body><div><img src="/brand/symbol.png" alt=""><h1>Offline</h1><p>LEÓN Home is unreachable. Connect Tailscale and try again.
-Readings are not stored on this phone.</p><a href="/">Try again</a></div></body></html>""".encode(
+<body><div><img src="/brand/symbol.png" alt=""><h1>Offline · Sin conexión</h1><p>LEÓN Home is unreachable. Connect Tailscale and try again.
+Readings are not stored on this phone.</p><p lang="es">No se puede contactar a LEÓN Home. Conecta Tailscale y reintenta.</p><a href="/">Try again · Reintentar</a></div></body></html>""".encode(
     'utf-8'
 )
 
@@ -1351,6 +1096,283 @@ def port_action(port, enabled):
 
 def device_action(mac, blocked):
     return router_action({'device': mac, 'blocked': blocked})
+
+
+HARDWARE_SOCKET = '/run/leon-hardware/control.sock'
+HARDWARE_MAX_REPLY = 32768
+HARDWARE_UNITS = frozenset(
+    {'pihole-FTL', 'unbound', 'ntfy', 'smbd', 'leon-router', 'leon-n8n', 'leon-overview-redirect'}
+)
+HARDWARE_ACTIONS = {
+    'led': ('led', {'name': ('ACT', 'PWR'), 'mode': ('on', 'off', 'auto')}),
+    'led-schedule': ('ledSchedule', {'schedule': None}),
+    'ethernet-leds': ('ethernetLeds', {'state': ('on', 'off')}),
+    'usb-power': ('usbPower', {'state': ('on', 'off')}),
+    'radio': ('radio', {'kind': ('wifi', 'bluetooth'), 'state': ('on', 'off')}),
+    'cpu-profile': ('cpuProfile', {'profile': ('balanced', 'powersave', 'performance')}),
+    'restart-service': ('restartService', {'unit': HARDWARE_UNITS}),
+    'power': ('power', {'action': ('reboot', 'shutdown'), 'confirm': None}),
+}
+HARDWARE_STATUSES = frozenset({'applied', 'pendingReboot', 'refused', 'unverified', 'invalid'})
+
+
+def hardware_request(action, body):
+    """Defense in depth: independent closed HTTP validation before privileged transport."""
+    if action not in HARDWARE_ACTIONS or not isinstance(body, dict):
+        raise ValueError('Invalid action')
+    command, fields = HARDWARE_ACTIONS[action]
+    if set(body) != set(fields):
+        raise ValueError('Invalid fields')
+    for field, choices in fields.items():
+        value = body[field]
+        if field == 'schedule':
+            if value is not None and (
+                not isinstance(value, dict)
+                or set(value) != {'start', 'end'}
+                or not all(
+                    isinstance(part, str) and re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', part)
+                    for part in value.values()
+                )
+            ):
+                raise ValueError('Invalid schedule')
+        elif not isinstance(value, str) or (
+            not 0 < len(value) <= 63 if field == 'confirm' else value not in choices
+        ):
+            raise ValueError('Invalid value')
+    return {'request': command, **body}
+
+
+def hardware_action(request):
+    """A failed connect is unavailable; after sending, missing evidence is unverified."""
+    fallback = {'status': 'unverified', 'message': 'Hardware response could not be verified.'}
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(30)
+        try:
+            connection.connect(HARDWARE_SOCKET)
+        except OSError:
+            return {'status': 'unavailable', 'message': 'Hardware helper is unavailable.'}
+        try:
+            connection.sendall(json.dumps(request, allow_nan=False).encode())
+            connection.shutdown(socket.SHUT_WR)
+            raw = bytearray()
+            deadline = time.monotonic() + 30
+            while len(raw) <= HARDWARE_MAX_REPLY:
+                connection.settimeout(max(0.001, deadline - time.monotonic()))
+                if time.monotonic() >= deadline:
+                    return fallback
+                chunk = connection.recv(min(4096, HARDWARE_MAX_REPLY + 1 - len(raw)))
+                if not chunk:
+                    break
+                raw.extend(chunk)
+            if len(raw) > HARDWARE_MAX_REPLY:
+                return fallback
+            reply = json.loads(raw)
+            if not isinstance(reply, dict) or set(reply) != {'status', 'message', 'state'}:
+                return fallback
+            if (
+                not isinstance(reply['status'], str)
+                or reply['status'] not in HARDWARE_STATUSES
+                or not isinstance(reply['message'], str)
+            ):
+                return fallback
+            if not valid_hardware_state(reply['state']):
+                return fallback
+            return {**reply, 'message': reply['message'][:200]}
+        except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
+            return fallback
+
+
+def valid_hardware_state(state):
+    """Check the root service boundary before merging private presentation data."""
+
+    if isinstance(state, dict) and 'usbPowerNote' in state:
+        if state['usbPowerNote'] != 'power returns on at restart':
+            return False
+        state = {key: value for key, value in state.items() if key != 'usbPowerNote'}
+
+    def switch(value):
+        return value in ('on', 'off', 'unknown')
+
+    def number(value):
+        return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+    def nullable_number(value):
+        return value is None or number(value)
+
+    def text(value):
+        return isinstance(value, str) and len(value) <= 200
+
+    def record(value, fields):
+        return (
+            isinstance(value, dict)
+            and set(value) == set(fields)
+            and all(check(value[key]) for key, check in fields.items())
+        )
+
+    def rows(value, maximum, check):
+        return (
+            isinstance(value, list) and len(value) <= maximum and all(check(row) for row in value)
+        )
+
+    try:
+        return record(
+            state,
+            {
+                'observedAt': number,
+                'leds': lambda value: (
+                    rows(
+                        value,
+                        2,
+                        lambda row: record(
+                            row,
+                            {
+                                'name': lambda name: name in ('ACT', 'PWR'),
+                                'mode': lambda mode: mode in ('on', 'off', 'auto', 'unknown'),
+                            },
+                        ),
+                    )
+                    and {row['name'] for row in value} == {'ACT', 'PWR'}
+                ),
+                'ledSchedule': lambda value: (
+                    value is None
+                    or record(
+                        value,
+                        {
+                            'start': lambda part: (
+                                isinstance(part, str)
+                                and bool(re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', part))
+                            ),
+                            'end': lambda part: (
+                                isinstance(part, str)
+                                and bool(re.fullmatch(r'(?:[01][0-9]|2[0-3]):[0-5][0-9]', part))
+                            ),
+                        },
+                    )
+                ),
+                'ethernetLeds': lambda value: record(
+                    value, {'configured': switch, 'pendingReboot': lambda part: type(part) is bool}
+                ),
+                'usb': lambda value: record(
+                    value,
+                    {
+                        'isSupported': lambda part: type(part) is bool,
+                        'power': switch,
+                        'devices': lambda devices: rows(
+                            devices,
+                            16,
+                            lambda row: record(
+                                row,
+                                {
+                                    'name': text,
+                                    'isStorage': lambda part: type(part) is bool,
+                                    'isMounted': lambda part: type(part) is bool,
+                                },
+                            ),
+                        ),
+                        'powerOffBlockedBy': lambda part: part is None or text(part),
+                    },
+                ),
+                'radios': lambda value: rows(
+                    value,
+                    2,
+                    lambda row: record(
+                        row,
+                        {
+                            'kind': lambda part: part in ('wifi', 'bluetooth'),
+                            'state': switch,
+                            'isHardBlocked': lambda part: type(part) is bool,
+                            'isUplink': lambda part: type(part) is bool,
+                        },
+                    ),
+                ),
+                'cpu': lambda value: record(
+                    value,
+                    {
+                        'profile': lambda part: (
+                            part in ('balanced', 'powersave', 'performance', 'custom', 'unknown')
+                        ),
+                        'governor': lambda part: part is None or text(part),
+                        'frequencyMhz': nullable_number,
+                    },
+                ),
+                'services': lambda value: rows(
+                    value,
+                    len(HARDWARE_UNITS),
+                    lambda row: record(
+                        row,
+                        {'unit': lambda part: part in HARDWARE_UNITS, 'label': text, 'state': text},
+                    ),
+                ),
+                'power': lambda value: record(value, {'rebootAllowedAt': nullable_number}),
+            },
+        )
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def hardware_view(data, *, helper_reply=None, now=None):
+    now = time.time() if now is None else now
+    reply = hardware_action({'request': 'state'}) if helper_reply is None else helper_reply
+    state = reply.get('state') if reply.get('status') == 'applied' else None
+    available = valid_hardware_state(state)
+    host, snapshot = data.get('host') or {}, data.get('snapshot') or {}
+    flags = host.get('throttledFlags')
+    names = ('underVoltage', 'frequencyCapped', 'throttled', 'softTemperatureLimit')
+    throttling = (
+        None
+        if type(flags) is not int
+        else {
+            period: {
+                name: bool(flags & (1 << (index + offset))) for index, name in enumerate(names)
+            }
+            for period, offset in (('now', 0), ('sinceBoot', 16))
+        }
+    )
+    board = None
+    try:
+        with open('/proc/device-tree/model', 'rb') as stream:
+            raw = stream.read(257)
+        if len(raw) <= 256:
+            board = raw.decode('utf-8').strip('\x00\n') or None
+    except (OSError, UnicodeError):
+        pass
+    fallback = {
+        'observedAt': now,
+        'leds': [],
+        'ledSchedule': None,
+        'ethernetLeds': {'configured': 'unknown', 'pendingReboot': False},
+        'usb': {'isSupported': False, 'power': 'unknown', 'devices': [], 'powerOffBlockedBy': None},
+        'radios': [],
+        'cpu': {'profile': 'unknown', 'governor': None, 'frequencyMhz': None},
+        'services': [
+            {
+                'unit': row['name'],
+                'label': UNIT_LABELS.get(row['name'], row['name']),
+                'state': row.get('state', 'unknown'),
+            }
+            for row in host.get('units', [])
+            if row.get('name') in HARDWARE_UNITS
+        ][: len(HARDWARE_UNITS)],
+        'power': {'rebootAllowedAt': None},
+    }
+    controls = {key: state[key] for key in fallback} if available else fallback
+    controls['services'] = [
+        {**row, 'label': UNIT_LABELS.get(row['unit'], row['unit'])} for row in controls['services']
+    ]
+    return {
+        **controls,
+        'helper': 'available' if available else 'unavailable',
+        'board': board,
+        'readings': {
+            'uptimeSeconds': snapshot.get('uptimeSeconds'),
+            'temperatureCelsius': host.get('temperatureCelsius'),
+            'cpuPercent': host.get('cpuPercent'),
+            'memoryAvailableBytes': snapshot.get('memoryAvailableBytes'),
+            'storageFreeBytes': snapshot.get('storageFreeBytes'),
+            'throttling': throttling,
+        },
+        'power': {**controls['power'], 'rebootRequired': bool(host.get('rebootRequired'))},
+    }
 
 
 def router_action(request):
@@ -1389,7 +1411,7 @@ def router_unlock(request):
 STORAGE_MOUNT = '/srv/leon-storage'
 
 
-def usb_storage_rows():
+def usb_storage_view():
     try:
         result = subprocess.run(
             [
@@ -1406,7 +1428,7 @@ def usb_storage_rows():
         )
         devices = json.loads(result.stdout)['blockdevices']
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-        return row(None, 'USB inventory unavailable')
+        return {'isAvailable': False, 'volumes': []}
 
     rows = []
     for disk in devices:
@@ -1420,10 +1442,16 @@ def usb_storage_rows():
             else:
                 name = volume['name']
             details = [size(volume.get('size')), volume.get('fstype'), ', '.join(mounts)]
-            rows.append(row(bool(mounts) or None, name, ' · '.join(filter(None, details))))
+            rows.append(
+                {
+                    'name': name,
+                    'detail': ' · '.join(filter(None, details)),
+                    'isMounted': bool(mounts),
+                }
+            )
             if len(rows) == 24:
-                return ''.join(rows)
-    return ''.join(rows) or row(None, 'No USB storage detected')
+                return {'isAvailable': True, 'volumes': rows}
+    return {'isAvailable': True, 'volumes': rows}
 
 
 SAMBA_CONFIG = '/etc/samba/smb.conf'
@@ -1433,6 +1461,11 @@ STORAGE_SETTINGS = '/etc/leon-overview/storage.json'
 DRIVE_NAME = re.compile(r'[^\x00-\x1f\x7f]{1,40}')
 PEER_URL = re.compile(r'smb://[A-Za-z0-9.-]{1,253}(/[A-Za-z0-9 _.-]{1,80})?')
 SHARE_NAME = re.compile(r'[A-Za-z0-9 _.-]{1,40}')
+# Optional, administrator-written, root:leon-overview 0640. Only accounts the panel owner may use:
+# {"accounts": [{"drive": "...", "user": "...", "password": "...", "canWrite": false}]}
+STORAGE_ACCOUNTS = '/etc/leon-overview/storage-accounts.json'
+ACCOUNT_USER = re.compile(r'[a-z_][a-z0-9_-]{0,31}')
+ACCOUNT_PASSWORD = re.compile(r'[^\x00-\x1f\x7f]{1,128}')
 
 
 def storage_settings():
@@ -1458,6 +1491,35 @@ def storage_settings():
         'name': name if isinstance(name, str) and DRIVE_NAME.fullmatch(name) else None,
         'peers': peers,
     }
+
+
+def storage_accounts():
+    """Validated sign-ins for the drives; a file other users can read is refused."""
+    try:
+        with open(STORAGE_ACCOUNTS, encoding='utf-8') as handle:
+            if os.fstat(handle.fileno()).st_mode & 0o007:
+                print('storage accounts ignored: file is open to other users', file=sys.stderr)
+                return []
+            value = json.loads(handle.read(8193)[:8192])
+    except (OSError, ValueError, RecursionError):
+        return []
+    rows = value.get('accounts') if isinstance(value, dict) else None
+    return [
+        {
+            'drive': row['drive'],
+            'user': row['user'],
+            'password': row['password'],
+            'canWrite': row.get('canWrite') is True,
+        }
+        for row in (rows if isinstance(rows, list) else [])[:8]
+        if isinstance(row, dict)
+        and isinstance(row.get('drive'), str)
+        and DRIVE_NAME.fullmatch(row['drive'])
+        and isinstance(row.get('user'), str)
+        and ACCOUNT_USER.fullmatch(row['user'])
+        and isinstance(row.get('password'), str)
+        and ACCOUNT_PASSWORD.fullmatch(row['password'])
+    ]
 
 
 def samba_shares():
@@ -1564,63 +1626,7 @@ def mounted_volume():
     }
 
 
-def drive_card(name, subtitle, volume=None, actions=''):
-    if volume:
-        used = volume['total'] - volume['free']
-        percent = round(100 * used / volume['total']) if volume['total'] else 0
-        facts = ' · '.join(
-            filter(
-                None,
-                [
-                    volume['label'],
-                    volume['filesystem'],
-                    {True: 'Read-only', False: 'Read and write'}.get(volume['readOnly']),
-                ],
-            )
-        )
-        gauge = (
-            f'<meter min="0" max="100" value="{percent}" aria-label="{percent}% used"></meter>'
-            f'<p class="drive-space"><span><b>{e(size(volume["free"]))}</b> free of '
-            f'{e(size(volume["total"]))}</span><small>{e(facts)}</small></p>'
-        )
-    else:
-        gauge = ''
-    return (
-        f'<article class="drive"><p class="drive-kind">{e(subtitle)}</p>'
-        f'<h2>{e(name)}</h2>{gauge}<p class="drive-actions">{actions}</p></article>'
-    )
-
-
-def connection_rows(shares, home, tailnet_address):
-    first = shares[0][0] if shares else None
-    if not first:
-        return row(None, 'Network sharing is not set up on this Pi')
-    hostname = socket.gethostname().split('.')[0]
-    local = f'{hostname}.local'
-    rows = []
-
-    def address_row(platform, address, note):
-        return (
-            f'<li><i class="dot ok"></i><span class="grow">{e(platform)}'
-            f'<code>{e(address)}</code></span><small>{e(note)}</small></li>'
-        )
-
-    if home:
-        rows.append(address_row('Mac at home', f'smb://{local}/{first}', 'Finder → Go → Connect'))
-        rows.append(address_row('Windows at home', f'\\\\{local}\\{first}', 'File Explorer'))
-        rows.append(address_row('Any device at home', f'smb://{home}/{first}', 'Home Wi-Fi'))
-    if tailnet_address:
-        rows.append(
-            address_row(
-                'Anywhere with Tailscale',
-                f'smb://{tailnet_address}/{first}',
-                'iPhone Files → Connect to Server',
-            )
-        )
-    return ''.join(rows)
-
-
-def storage_destination_rows(mounted, show_automation, shares):
+def storage_destinations(mounted, show_automation, shares):
     destinations = [(name, path) for name, path in shares or []]
     if show_automation:
         destinations.append(('n8n data', os.path.join(STORAGE_MOUNT, 'n8n')))
@@ -1637,73 +1643,95 @@ def storage_destination_rows(mounted, show_automation, shares):
                 status = 'Folder not created'
             except OSError:
                 status = 'Folder status unavailable'
-        rows.append(row(ready, name, f'{path} · {status}'))
-    return ''.join(rows) or row(None, 'No shared folders configured')
+        rows.append(
+            {
+                'name': name,
+                'path': path,
+                'status': status,
+                'tone': 'good' if ready is True else 'warn' if ready is False else 'unknown',
+            }
+        )
+    return rows[:9]
 
 
-def render_storage(*, show_automation=True):
+def storage_view(*, show_automation=True):
     settings = storage_settings()
     volume = mounted_volume()
     shares, home = samba_shares()
     tailnet_address = tailscale_address() if shares else None
     first = shares[0][0] if shares else None
-    open_link = (
-        f'<a href="smb://{e(tailnet_address or home)}/{e(first)}">Open in Files or Finder</a>'
-        if first and (tailnet_address or home)
-        else ''
-    )
-    mine = drive_card(
-        settings['name'] or (volume or {}).get('label') or 'My drive',
-        'This LEÓN Home' if volume else 'This LEÓN Home · drive not connected',
-        volume,
-        ('<a class="primary" href="/storage/files">Browse files</a>' if volume else '') + open_link,
-    )
-    peers = ''.join(
-        drive_card(
-            peer['name'],
-            'Another LEÓN Home · over Tailscale',
-            actions=f'<a href="{e(peer["url"])}">Open in Files or Finder</a>',
-        )
-        for peer in settings['peers']
-    )
-    tv = tv_server_name()
-    content = (
-        f'<section class="section drives" id="nas">{mine}{peers}</section>'
-        + panel(
-            'connect',
-            'Connect from other devices',
-            '',
-            f'<ul class="rows">{connection_rows(shares, home, tailnet_address)}</ul>'
-            + (
-                '<p class="note">Sign in with your own storage account. The household '
-                'administrator gives each person a password.</p>'
-                if shares
-                else ''
-            ),
-        )
-        + (
-            panel(
-                'tv',
-                'Watch on the TV',
-                '',
-                '<ul class="rows">'
-                + row(True, tv, 'Open the TV media app or VLC → Local network')
-                + '</ul>',
+    open_url = None
+    if isinstance(first, str) and SHARE_NAME.fullmatch(first):
+        for candidate in (tailnet_address, home):
+            try:
+                address = (
+                    str(ipaddress.IPv4Address(candidate)) if isinstance(candidate, str) else None
+                )
+            except ValueError:
+                continue
+            if address:
+                open_url = f'smb://{address}/{first}'
+                break
+    connections = []
+    if first:
+        local = socket.gethostname().split('.')[0] + '.local'
+        if home:
+            connections.extend(
+                [
+                    {
+                        'platform': 'Mac at home',
+                        'address': f'smb://{local}/{first}',
+                        'note': 'Finder → Go → Connect',
+                    },
+                    {
+                        'platform': 'Windows at home',
+                        'address': '\\\\' + home + '\\' + first,
+                        'note': 'On your home network, paste this into the File Explorer address bar.',
+                    },
+                    {
+                        'platform': 'Any device at home',
+                        'address': f'smb://{home}/{first}',
+                        'note': 'Home Wi-Fi',
+                    },
+                ]
             )
-            if tv
-            else ''
-        )
-        + panel(
-            'destinations',
-            'Shared folders',
-            '',
-            f'<ul class="rows">{storage_destination_rows(bool(volume), show_automation, shares)}</ul>',
-        )
-        + panel('usb', 'USB drives', '', f'<ul class="rows">{usb_storage_rows()}</ul>')
-        + '<nav class="section links" aria-label="Storage navigation">'
-        '<a href="/storage">Refresh</a><a href="/">Back to Home</a></nav>'
-    )
-    return page(content, None, time.time(), section='Drives')
+        if tailnet_address:
+            connections.append(
+                {
+                    'platform': 'Windows away from home',
+                    'address': '\\\\' + tailnet_address + '\\' + first,
+                    'note': 'Connect Tailscale on the PC, then paste this into the File Explorer address bar.',
+                }
+            )
+            connections.append(
+                {
+                    'platform': 'Anywhere with Tailscale',
+                    'address': f'smb://{tailnet_address}/{first}',
+                    'note': 'iPhone Files → Connect to Server',
+                }
+            )
+    return {
+        'drive': {
+            'name': settings['name'] or (volume or {}).get('label') or 'My drive',
+            'isMounted': volume is not None,
+            'totalBytes': (volume or {}).get('total'),
+            'freeBytes': (volume or {}).get('free'),
+            'label': (volume or {}).get('label'),
+            'filesystem': (volume or {}).get('filesystem'),
+            'isReadOnly': (volume or {}).get('readOnly'),
+            'openUrl': open_url,
+        },
+        'peers': settings['peers'],
+        'connections': connections[:5],
+        'isSharingSetUp': bool(shares),
+        'accounts': [
+            {key: account[key] for key in ('drive', 'user', 'canWrite')}
+            for account in storage_accounts()
+        ],
+        'tvServerName': tv_server_name(),
+        'folders': storage_destinations(bool(volume), show_automation, shares),
+        'usbDrives': usb_storage_view(),
+    }
 
 
 # Read-only file browser over the mounted shared volume. Never falls back to the system disk.
@@ -1754,22 +1782,7 @@ def storage_path(relative):
     return target, '/'.join(parts)
 
 
-def file_link(relative, *, directory):
-    query = urllib.parse.urlencode({'path': relative})
-    return f'/storage/files?{query}' if directory else f'/storage/download?{query}'
-
-
-def entry_row(relative, name, is_directory, detail):
-    href = e(file_link(relative, directory=is_directory))
-    label = f'{name}/' if is_directory else name
-    return (
-        f'<li><i class="dot {"ok" if is_directory else "idle"}"></i>'
-        f'<a class="grow entry" href="{href}"><span>{e(label)}</span>'
-        f'<small>{e(detail)}</small></a></li>'
-    )
-
-
-def directory_rows(target, relative):
+def directory_entries(target, relative):
     try:
         with os.scandir(target) as entries:
             listed = []
@@ -1779,7 +1792,7 @@ def directory_rows(target, relative):
                 if len(listed) > MAX_LISTED:
                     break
     except OSError:
-        return row(None, 'Folder unavailable'), False
+        raise FileNotFoundError(target) from None
     truncated = len(listed) > MAX_LISTED
     rows = []
     for entry in sorted(
@@ -1795,24 +1808,32 @@ def directory_rows(target, relative):
             continue
         modified = time.strftime('%Y-%m-%d', time.localtime(info.st_mtime))
         detail = modified if is_directory else f'{size(info.st_size)} · {modified}'
-        rows.append(entry_row(child, entry.name, is_directory, detail))
-    return ''.join(rows) or row(None, 'Empty folder'), truncated
+        rows.append(file_entry(child, entry.name, is_directory, detail, info))
+    return rows, truncated
 
 
-def search_rows(target, relative, query):
+def search_entries(target, relative, query):
     """Bounded case-insensitive name search below the current folder."""
     needle = query.casefold()
     deadline = time.monotonic() + SEARCH_LIMITS['seconds']
     rows, visited, complete = [], 0, True
+    scanned = 0
     pending = collections.deque([(target, relative, 0)])
     while pending:
         folder, prefix, depth = pending.popleft()
         try:
             with os.scandir(folder) as entries:
-                children = [
-                    item for item in entries if visible(item.name) and not item.is_symlink()
-                ]
+                children = []
+                for item in entries:
+                    scanned += 1
+                    if time.monotonic() > deadline or scanned > SEARCH_LIMITS['visited']:
+                        complete = False
+                        break
+                    if visible(item.name) and not item.is_symlink():
+                        children.append(item)
         except OSError:
+            if folder == target:
+                raise
             continue
         for entry in sorted(children, key=lambda item: item.name.casefold()):
             visited += 1
@@ -1821,71 +1842,57 @@ def search_rows(target, relative, query):
                 or visited > SEARCH_LIMITS['visited']
                 or time.monotonic() > deadline
             ):
-                return ''.join(rows), False
+                return rows, False
             child = f'{prefix}/{entry.name}' if prefix else entry.name
             try:
-                is_directory = entry.is_dir(follow_symlinks=False)
+                info = entry.stat(follow_symlinks=False)
+                is_directory = stat.S_ISDIR(info.st_mode)
+                if not is_directory and not stat.S_ISREG(info.st_mode):
+                    continue
             except OSError:
                 continue
             if needle in entry.name.casefold():
-                rows.append(entry_row(child, entry.name, is_directory, prefix or 'Top folder'))
+                rows.append(
+                    file_entry(child, entry.name, is_directory, prefix or 'Top folder', info)
+                )
             if is_directory:
                 if depth + 1 < SEARCH_LIMITS['depth']:
                     pending.append((entry.path, child, depth + 1))
                 else:
                     complete = False
-    return ''.join(rows), complete
+    return rows, complete
 
 
-def breadcrumbs(relative):
-    links = ['<a href="/storage/files">Drive</a>']
-    parts = relative.split('/') if relative else []
-    for index, part in enumerate(parts):
-        link = e(file_link('/'.join(parts[: index + 1]), directory=True))
-        links.append(f'<a href="{link}">{e(part)}</a>')
-    return (
-        '<nav class="section crumbs" aria-label="Folder path">'
-        + '<span aria-hidden="true">›</span>'.join(links)
-        + '</nav>'
-    )
+def file_entry(path, name, is_directory, detail, info):
+    return {
+        'name': name,
+        'path': path,
+        'isDirectory': is_directory,
+        'detail': detail,
+        'sizeBytes': None if is_directory else info.st_size,
+        'modifiedAt': info.st_mtime,
+    }
 
 
-def render_files(relative, query=''):
+def files_view(relative, query=''):
     resolved = storage_path(relative)
     if resolved is None or not os.path.isdir(resolved[0]):
-        body = panel(
-            'files',
-            'Files',
-            '',
-            f'<ul class="rows">{row(None, "Folder unavailable or drive not mounted")}</ul>',
-        )
-        return page(body + breadcrumbs(''), None, time.time(), section='Files'), 404
+        raise FileNotFoundError('Folder unavailable or drive not mounted')
     target, relative = resolved
+    candidate = STORAGE_MOUNT
+    for part in relative.split('/') if relative else []:
+        candidate = os.path.join(candidate, part)
+        if os.path.islink(candidate):
+            raise FileNotFoundError('Folder unavailable or drive not mounted')
     query = query.strip()[:80]
-    search = (
-        '<form class="section" method="get" action="/storage/files" role="search">'
-        f'<input type="hidden" name="path" value="{e(relative)}">'
-        f'<input type="search" name="q" value="{e(query)}" maxlength="80" '
-        'placeholder="Search this folder" aria-label="Search this folder" enterkeyhint="search">'
-        '</form>'
-    )
     if query:
-        rows, complete = search_rows(target, relative, query)
-        title = 'Search results'
-        meta = '' if complete else 'Partial results; refine the search'
-        rows = rows or row(None, 'No matching names')
+        entries, complete = search_entries(target, relative, query)
+        title, meta = 'Search results', '' if complete else 'Partial results; refine the search'
     else:
-        rows, truncated = directory_rows(target, relative)
+        entries, truncated = directory_entries(target, relative)
         title = relative.rsplit('/', 1)[-1] if relative else 'Drive'
         meta = f'First {MAX_LISTED} items' if truncated else ''
-    body = (
-        breadcrumbs(relative)
-        + search
-        + panel('files', title, meta, f'<ul class="rows">{rows}</ul>')
-        + '<nav class="section links" aria-label="Storage navigation">'
-        '<a href="/storage">Storage</a><a href="/">Back to Home</a></nav>'
-    )
-    return page(body, None, time.time(), section='Files'), 200
+    return {'path': relative, 'query': query, 'title': title, 'meta': meta, 'entries': entries}
 
 
 def byte_range(header, length):
@@ -1968,146 +1975,101 @@ def n8n_data(config):
     return workflows, n8n_rows(recent)
 
 
-def automation_setup(config, login, *, opened=False, message=''):
-    if not login:
-        return ''
-    editor = config.get('editorUrl')
-    editor = editor if isinstance(editor, str) and N8N_EDITOR.fullmatch(editor) else ''
-    stored_key = config.get('apiKey')
-    key_required = (
-        '' if isinstance(stored_key, str) and N8N_KEY.fullmatch(stored_key) else ' required'
-    )
-    return (
-        f'<details class="section automation-setup" id="automation-settings"{" open" if opened else ""}>'
-        '<summary>Connection settings</summary>'
-        '<p class="note">Create a key in n8n under Settings → n8n API with workflow:list and '
-        'execution:list access. Use the private Tailscale address if you have enabled HTTPS for n8n.</p>'
-        + (f'<p class="note" role="status">{e(message)}</p>' if message else '')
-        + '<form class="automation-form" method="post" action="/automation/settings">'
-        f'<input type="hidden" name="t" value="{e(token(login))}">'
-        '<label for="automation-key">Read-only API key</label>'
-        f'<input id="automation-key" type="password" name="apiKey" maxlength="4096" autocomplete="off"{key_required}>'
-        '<label for="automation-url">Private editor URL</label>'
-        f'<input id="automation-url" type="text" name="editorUrl" inputmode="url" maxlength="253" value="{e(editor)}">'
-        '<button class="primary">Save connection</button></form></details>'
-    )
+def save_automation_settings(api_key, editor_url):
+    status = 'invalid'
+    config = n8n_panel_config()
+    key = api_key.strip() or config.get('apiKey')
+    editor = editor_url.strip()
+    if not isinstance(key, str) or not N8N_KEY.fullmatch(key):
+        message = 'Enter an n8n API key.'
+    elif editor and (len(editor) > 253 or not N8N_EDITOR.fullmatch(editor)):
+        message = 'Use the HTTPS address ending in ts.net for the editor.'
+    elif (
+        n8n_rows(n8n_get('/api/v1/workflows?limit=1', key)) is None
+        or n8n_rows(n8n_get('/api/v1/executions?limit=1&includeData=false', key)) is None
+    ):
+        status = 'refused'
+        message = 'Check that n8n is running and the key can list workflows and executions.'
+    else:
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode='w', dir=os.path.dirname(N8N_PANEL_STATE), delete=False
+            ) as draft:
+                try:
+                    json.dump({'apiKey': key, 'editorUrl': editor}, draft)
+                    draft.flush()
+                    os.fsync(draft.fileno())
+                    os.replace(draft.name, N8N_PANEL_STATE)
+                finally:
+                    if os.path.exists(draft.name):
+                        os.unlink(draft.name)
+        except OSError:
+            status = 'refused'
+            message = 'Could not save the connection on this Pi.'
+        else:
+            return {'status': 'saved', 'message': 'Connection saved.'}
+    return {'status': status, 'message': message}
 
 
-def render_automation(login=None, *, failures_only=False, message=''):
+def automation_view(*, failures_only=False):
     response = n8n_get('/healthz/readiness')
     ready = isinstance(response, dict) and response.get('status') == 'ok'
     config = n8n_panel_config()
     workflows, executions = n8n_data(config) if ready else (None, None)
-    editor_url = config.get('editorUrl')
-    editor_ready = isinstance(editor_url, str) and N8N_EDITOR.fullmatch(editor_url)
-    editor_link = (
-        f'<a class="automation-action primary" href="{e(editor_url)}">Open n8n editor</a>'
-        if editor_ready
-        else ''
-    )
-    headline = 'n8n is ready' if ready else 'n8n is unavailable'
-    status = 'ok' if ready else 'idle'
-    workflow_names = {}
-    workflow_items = []
-    for workflow in workflows or []:
+    editor = config.get('editorUrl')
+    key = config.get('apiKey')
+    names, workflow_items, execution_items = {}, [], []
+    for workflow in (workflows or [])[:12]:
         workflow_id = workflow.get('id')
         if not isinstance(workflow_id, str) or not N8N_ID.fullmatch(workflow_id):
             continue
         name = clean_name(workflow.get('name')) or 'Workflow'
-        workflow_names[workflow_id] = name
+        names[workflow_id] = name
         active = workflow.get('active')
-        state = (
-            {True: 'Published', False: 'Draft'}.get(active, 'Unknown')
-            if type(active) is bool
-            else 'Unknown'
+        active = active if type(active) is bool else None
+        workflow_items.append(
+            {
+                'id': workflow_id,
+                'name': name,
+                'state': {True: 'Published', False: 'Draft', None: 'Unknown'}[active],
+                'isActive': active,
+            }
         )
-        link = (
-            f'<a class="head-link" href="{e(editor_url.rstrip("/"))}/workflow/{workflow_id}">Open</a>'
-            if editor_ready
-            else ''
-        )
-        workflow_items.append(row(active is True or None, name, state, extra=link))
-
-    execution_items = []
-    for execution in executions or []:
+    for execution in (executions or [])[:12]:
         raw_status = clean_name(execution.get('status'))
         if failures_only and raw_status not in ('error', 'crashed'):
             continue
         label, tone = EXECUTION_STATES.get(raw_status, ('Unknown', None))
-        execution_workflow = clean_name(execution.get('workflowId'))
-        name = workflow_names.get(execution_workflow, 'Workflow execution')
-        started = clean_name(execution.get('startedAt'))
-        time_label = re.sub(
-            r'T|Z$', lambda match: ' ' if match[0] == 'T' else ' UTC', started or ''
+        execution_items.append(
+            {
+                'workflowName': names.get(
+                    clean_name(execution.get('workflowId')), 'Workflow execution'
+                ),
+                'label': label,
+                'tone': 'good' if tone is True else 'warn' if tone is False else 'unknown',
+                'startedAt': clean_name(execution.get('startedAt')) or None,
+            }
         )
-        execution_items.append(row(tone, name, f'{label} · {time_label}' if started else label))
-    connected = workflows is not None or executions is not None
-    setup_link = (
-        '<a class="head-link" href="#automation-settings">Connect</a>' if not connected else ''
-    )
-    filters = ''
-    if executions is not None:
-        selected_all = '' if failures_only else ' aria-current="true"'
-        selected_failed = ' aria-current="true"' if failures_only else ''
-        filters = (
-            '<nav class="automation-filters" aria-label="Filter executions">'
-            f'<a href="/automation#executions"{selected_all}>All</a>'
-            f'<a href="/automation?status=failed#executions"{selected_failed}>Failed</a></nav>'
-        )
-    overview_html = (
-        f'<section class="overview automation-overview" id="automation-service">'
-        f'<h1 class="status-line"><i class="dot {status}"></i>{headline}</h1>'
-        '<dl class="automation-metrics">'
-        f'<div><dt>Workflows shown</dt><dd>{len(workflow_items) if workflows is not None else "—"}</dd></div>'
-        f'<div><dt>Recent runs</dt><dd>{len(executions) if executions is not None else "—"}</dd></div>'
-        '</dl><nav class="automation-actions" aria-label="Automation actions">'
-        + editor_link
-        + '<a class="automation-action" href="/automation">Refresh</a>'
-        '<a class="automation-action" href="/storage">Storage</a></nav></section>'
-    )
-    empty_workflows = 'No workflows found' if workflows is not None else 'Workflow list unavailable'
-    empty_executions = (
-        'No stored executions' if executions is not None else 'Execution history unavailable'
-    )
-    if failures_only and executions is not None:
-        empty_executions = 'No failures in recent executions'
-    runs = ''.join(execution_items) or row(None, empty_executions)
-    work = ''.join(workflow_items) or row(None, empty_workflows)
-    content = (
-        overview_html
-        + '<div class="pair">'
-        + '<section class="section automation-list" id="workflows">'
-        + section_head('Workflows', link=setup_link)
-        + f'<ul class="rows">{work}</ul></section>'
-        + panel('executions', 'Recent executions', '', filters + f'<ul class="rows">{runs}</ul>')
-        + '</div>'
-        + automation_setup(config, login, opened=not connected or bool(message), message=message)
-    )
-    return page(content, None, time.time(), section='Automation')
+    return {
+        'isReady': ready,
+        'isConnected': workflows is not None or executions is not None,
+        'editorUrl': editor
+        if isinstance(editor, str) and len(editor) <= 253 and N8N_EDITOR.fullmatch(editor)
+        else None,
+        'hasStoredKey': isinstance(key, str) and bool(N8N_KEY.fullmatch(key)),
+        'workflows': workflow_items if workflows is not None else None,
+        'executions': execution_items if executions is not None else None,
+        'failuresOnly': failures_only,
+    }
 
 
-def page(body, nonce, updated=None, *, section='Home'):
-    navigation = tab_bar('home' if section == 'Home' else '')
-    module = (
-        f'<script type="module" nonce="{nonce}" src="/network-map/assets/home.js"></script>'
-        if nonce
-        else ''
-    )
-    stamp = (
-        f'<time class="updated" datetime="{e(time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(updated)))}">'
-        f'Updated {e(time.strftime("%H:%M", time.localtime(updated)))}</time>'
-        if updated
-        else ''
-    )
+def app_shell(nonce):
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0e0e0e"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="LEÓN Home"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="icon" href="/brand/symbol.png"><link rel="manifest" href="/manifest.webmanifest"><title>LEÓN Home</title><link rel="stylesheet" href="/network-map/assets/home.css"></head><body>
-<p class="connection" id="connection" role="status" hidden></p><main>
-<header><img class="symbol" src="/brand/symbol.png" alt=""><img class="word" src="/brand/wordmark.png" alt="LEÓN">
-<span class="sub">{e(section)}</span>{stamp}</header>{body}</main>{navigation}{module}</body></html>""".encode(
+<link rel="icon" href="/brand/symbol.png"><link rel="manifest" href="/manifest.webmanifest"><title>LEÓN Home</title><link rel="stylesheet" href="/network-map/assets/leon.css"><meta name="color-scheme" content="dark"></head><body><div id="app" class="app"><noscript><p class="boot-failure">LEÓN Home needs JavaScript.</p></noscript></div><script type="module" nonce="{nonce}" src="/network-map/assets/leon.js"></script></body></html>""".encode(
         'utf-8'
     )
 
@@ -2117,6 +2079,7 @@ def page(body, nonce, updated=None, *, section='Home'):
 
 class Handler(http.server.BaseHTTPRequestHandler):
     storage_automation = True
+    signed_updates = False  # the family edition serves /updates
 
     server_version = 'leon-overview'
     sys_version = ''
@@ -2125,38 +2088,66 @@ class Handler(http.server.BaseHTTPRequestHandler):
         login = (self.headers.get('Tailscale-User-Login') or '').strip().lower()
         return login if login and login in OWNERS else None
 
+    def versions(self):
+        """(installed, available update); the family edition asks its signed updater."""
+        return installed_version(), None
+
+    def use_own_api_path(self):
+        """The app calls /leon/v1 because Tailscale Serve sends /api to Pi-hole; /api/v1 is the same API."""
+        if self.path.startswith('/leon/v1/'):
+            self.path = '/api/v1/' + self.path.removeprefix('/leon/v1/')
+
     def do_GET(self):
+        self.use_own_api_path()
         login = self.owner()
         if not login:
+            if self.path.startswith('/api/v1/'):
+                return self.reply_json(
+                    403, {'status': 'forbidden', 'message': 'Owner access is required.'}
+                )
             return self.reply(403, b'Forbidden', 'text/plain; charset=utf-8')
         path = self.path.split('?', 1)[0]
-        if path == '/automation' and self.storage_automation:
-            query = (
-                urllib.parse.parse_qs(self.path.partition('?')[2], max_num_fields=10)
-                if len(self.path) <= 256 and self.path.count('&') < 10
-                else {}
-            )
-            return self.reply(
-                200,
-                render_automation(login, failures_only=query.get('status') == ['failed']),
-                'text/html; charset=utf-8',
-            )
-        if path in ('/storage/files', '/storage/download'):
+        if (
+            path in ('/automation', '/storage/automation', '/api/v1/automation')
+            and not self.storage_automation
+        ):
+            return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
+        if path == '/api/v1/storage':
+            return self.reply_json(200, storage_view(show_automation=self.storage_automation))
+        if path == '/storage/download':
             query = (
                 urllib.parse.parse_qs(self.path.partition('?')[2], max_num_fields=2)
                 if len(self.path) <= 4096
                 else {}
             )
             relative = (query.get('path') or [''])[0]
-            if path == '/storage/download':
-                return self.download(relative)
-            body, status = render_files(relative, (query.get('q') or [''])[0])
-            return self.reply(status, body, 'text/html; charset=utf-8')
-        if path == '/storage':
-            return self.reply(
-                200,
-                render_storage(show_automation=self.storage_automation),
-                'text/html; charset=utf-8',
+            return self.download(relative)
+        if path == '/api/v1/storage/files':
+            try:
+                query = (
+                    urllib.parse.parse_qs(self.path.partition('?')[2], max_num_fields=2)
+                    if len(self.path) <= 4096
+                    else {}
+                )
+            except ValueError:
+                return self.reply_json(400, {'status': 'invalid', 'message': 'Invalid file query.'})
+            relative = (query.get('path') or [''])[0]
+            try:
+                view = files_view(relative, (query.get('q') or [''])[0])
+            except OSError:
+                return self.reply_json(
+                    404,
+                    {'status': 'unavailable', 'message': 'Folder unavailable or drive not mounted'},
+                )
+            return self.reply_json(200, view)
+        if path == '/api/v1/automation':
+            query = (
+                urllib.parse.parse_qs(self.path.partition('?')[2], max_num_fields=10)
+                if len(self.path) <= 256 and self.path.count('&') < 10
+                else {}
+            )
+            return self.reply_json(
+                200, automation_view(failures_only=query.get('status') == ['failed'])
             )
         if path == '/manifest.webmanifest':
             return self.reply(
@@ -2185,138 +2176,309 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
             body, content_type = asset
             return self.reply(200, body, content_type)
-        if path in ('/network-map', '/network-map/data'):
-            # Unlike legacy overview access, map access always requires an explicit owner.
-            if login not in OWNERS:
-                return self.reply(403, b'Forbidden', 'text/plain; charset=utf-8')
+        if path in ('/network-map/data', '/api/v1/network'):
             with _lock:
                 data = dict(_data)
-            if path.endswith('/data'):
-                body = json.dumps(
-                    {**network_map.snapshot(data), 'actionToken': token(login)}, allow_nan=False
-                ).encode('utf-8')
-                return self.reply(200, body, 'application/json; charset=utf-8')
-            nonce = base64.b64encode(os.urandom(12)).decode()
-            try:
-                with open(
-                    os.path.join(os.path.dirname(__file__), 'network-map.html'), encoding='utf-8'
-                ) as handle:
-                    template = handle.read(128_001)
-                if len(template) > 128_000:
-                    raise ValueError('Map template too large')
-            except (OSError, ValueError):
-                return self.reply(503, b'Map unavailable', 'text/plain; charset=utf-8')
-            return self.reply(
+            return self.reply_json(200, {**network_map.snapshot(data), 'actionToken': token(login)})
+        if path == '/api/v1/session':
+            version, available = self.versions()
+            return self.reply_json(
                 200,
-                template.replace('__NONCE__', nonce).encode('utf-8'),
-                'text/html; charset=utf-8',
-                nonce=nonce,
+                session_view(
+                    login,
+                    automation=self.storage_automation,
+                    updates=self.signed_updates,
+                    version=version,
+                    available=available,
+                ),
             )
-        if path not in ('/', '/index.html'):
+        if path == '/api/v1/home':
+            with _lock:
+                view = home_view(_data)
+            return self.reply_json(200, view)
+        if path == '/api/v1/hardware':
+            with _lock:
+                data = dict(_data)
+            return self.reply_json(200, hardware_view(data))
+        route = path
+        if path.startswith('/network/device/'):
+            try:
+                segment = path.removeprefix('/network/device/')
+                ipaddress.IPv4Address(segment)
+            except ValueError:
+                return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
+            route = '/network/device/:id'
+        if route not in APP_ROUTES:
             return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
-        with _lock:
-            data = dict(_data)
         nonce = base64.b64encode(os.urandom(12)).decode()
-        self.reply(200, render(data, login, nonce), 'text/html; charset=utf-8', nonce=nonce)
+        return self.reply(200, app_shell(nonce), 'text/html; charset=utf-8', nonce=nonce)
 
     def do_POST(self):
+        self.use_own_api_path()
         login = self.owner()
         if not login:
+            if self.path.startswith('/api/v1/'):
+                return self.reply_json(
+                    403, {'status': 'forbidden', 'message': 'Owner access is required.'}
+                )
             return self.reply(403, b'Forbidden', 'text/plain; charset=utf-8')
+        if self.path.startswith('/api/v1/hardware/'):
+            return self.hardware_control(login)
+        if self.path.startswith('/api/v1/network/') or self.path in (
+            '/api/v1/automation/settings',
+            '/api/v1/storage/password',
+        ):
+            origin, host = self.headers.get('Origin'), self.headers.get('Host')
+            if (
+                self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin')
+                or (origin is not None and origin not in (f'http://{host}', f'https://{host}'))
+                or not token_valid(login, self.headers.get('X-Leon-Token'))
+            ):
+                return self.reply_json(
+                    403, {'status': 'forbidden', 'message': 'Reload the page and try again.'}
+                )
+        if self.path == '/api/v1/automation/settings':
+            if not self.storage_automation:
+                return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
+            return self.automation_settings_json(login)
         if self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin'):
             return self.reply(403, b'Cross-site request refused', 'text/plain; charset=utf-8')
-        if self.path == '/automation/settings' and self.storage_automation:
-            return self.automation_settings(login)
-        length = int(self.headers.get('Content-Length') or 0)
-        if length > 2048:
-            return self.reply(413, b'Too large', 'text/plain; charset=utf-8')
-        if self.path == '/network-map/port':
-            return self.port(login, length)
-        if self.path == '/network-map/unlock':
-            return self.unlock(login, length)
-        if self.path == '/network-map/name':
-            return self.rename(login, length)
-        if self.path == '/network-map/pause':
-            return self.pause(login, length)
-        if self.path == '/network-map/schedule':
-            return self.schedule(login, length)
-        form = urllib.parse.parse_qs(self.rfile.read(length).decode('utf-8', 'replace'))
-        if not token_valid(login, (form.get('t') or [''])[0]):
-            return self.reply(403, b'Expired form. Reload the page.', 'text/plain; charset=utf-8')
         try:
-            if self.path == '/action/pause' and (form.get('s') or [''])[0] in PAUSE_CHOICES:
-                set_blocking(False, int(form['s'][0]))
-            elif self.path == '/action/resume':
-                set_blocking(True)
-            else:
-                return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
-        except (OSError, ValueError, KeyError, TypeError):
-            return self.reply(
-                502, b'Pi-hole did not accept the change.', 'text/plain; charset=utf-8'
-            )
-        print(f'action {self.path} by owner', file=sys.stderr, flush=True)
-        self.send_response(303)
-        self.send_header('Location', '/')
-        self.send_header('Content-Length', '0')
-        self.end_headers()
+            length = int(self.headers.get('Content-Length') or 0)
+            if length < 0 or self.headers.get('Transfer-Encoding'):
+                raise ValueError
+        except ValueError:
+            return self.reply_json(400, {'status': 'invalid', 'message': 'Invalid body length.'})
+        if length > 2048:
+            if self.path.startswith('/api/v1/network/'):
+                return self.reply_json(
+                    413, {'status': 'invalid', 'message': 'Request is too large.'}
+                )
+            return self.reply(413, b'Too large', 'text/plain; charset=utf-8')
+        if self.path == '/api/v1/network/wake':
+            return self.wake(login, length)
+        if self.path == '/api/v1/storage/password':
+            return self.storage_password(length)
+        if self.path in ('/api/v1/dns/pause', '/api/v1/dns/resume'):
+            return self.dns_blocking(login, length)
+        # /network-map/port remains for the Mac app. The other /network-map/* actions
+        # are deprecated aliases of /api/v1/network/* until external clients migrate.
+        if self.path in ('/network-map/port', '/api/v1/network/port'):
+            return self.port(login, length)
+        if self.path in ('/network-map/unlock', '/api/v1/network/unlock'):
+            return self.unlock(login, length)
+        if self.path in ('/network-map/name', '/api/v1/network/name'):
+            return self.rename(login, length)
+        if self.path in ('/network-map/pause', '/api/v1/network/pause'):
+            return self.pause(login, length)
+        if self.path in ('/network-map/schedule', '/api/v1/network/schedule'):
+            return self.schedule(login, length)
+        return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
 
-    def automation_settings(self, login):
+    def hardware_control(self, login):
+        origin = self.headers.get('Origin')
+        host = self.headers.get('Host')
+        if origin is not None and origin not in (f'http://{host}', f'https://{host}'):
+            return self.reply_json(
+                403, {'status': 'forbidden', 'message': 'Cross-site request refused.'}
+            )
+        if self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin') or not token_valid(
+            login, self.headers.get('X-Leon-Token')
+        ):
+            return self.reply_json(
+                403, {'status': 'forbidden', 'message': 'Reload the page and try again.'}
+            )
+        action = self.path.removeprefix('/api/v1/hardware/')
+        if action not in HARDWARE_ACTIONS:
+            return self.reply_json(
+                404, {'status': 'invalid', 'message': 'Unknown hardware action.'}
+            )
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+            if length < 0 or self.headers.get('Transfer-Encoding'):
+                raise ValueError
+            if length > 1024:
+                return self.reply_json(
+                    413, {'status': 'invalid', 'message': 'Hardware request is too large.'}
+                )
+            if (self.headers.get('Content-Type') or '').split(';', 1)[
+                0
+            ].strip() != 'application/json':
+                raise ValueError
+            request = hardware_request(action, json.loads(self.rfile.read(length)))
+        except (ValueError, UnicodeError, RecursionError):
+            return self.reply_json(
+                400, {'status': 'invalid', 'message': 'Invalid hardware request.'}
+            )
+        if action == 'power' and request['confirm'] != socket.gethostname().split('.')[0]:
+            return self.reply_json(
+                200, {'status': 'refused', 'message': 'The node name does not match.'}
+            )
+        outcome = hardware_action(request)
+        return self.reply_json(
+            503 if outcome['status'] == 'unavailable' else 200,
+            {'status': outcome['status'], 'message': outcome['message'][:200]},
+        )
+
+    def reply_json(self, status, value):
+        return self.reply(
+            status,
+            json.dumps(value, allow_nan=False).encode('utf-8'),
+            'application/json; charset=utf-8',
+        )
+
+    def dns_blocking(self, login, length):
+        if not token_valid(login, self.headers.get('X-Leon-Token')):
+            return self.reply_json(
+                403, {'status': 'forbidden', 'message': 'Reload the page and try again.'}
+            )
+        pause = self.path == '/api/v1/dns/pause'
+        try:
+            content_type = (self.headers.get('Content-Type') or '').split(';', 1)[0].strip()
+            if content_type != 'application/json':
+                raise ValueError
+            request = json.loads(self.rfile.read(length))
+            if not isinstance(request, dict) or set(request) != ({'seconds'} if pause else set()):
+                raise ValueError
+            if pause and (
+                type(request['seconds']) is not int or request['seconds'] not in (300, 1800)
+            ):
+                raise ValueError
+        except (ValueError, UnicodeError, RecursionError):
+            return self.reply_json(400, {'status': 'invalid', 'message': 'Invalid DNS request.'})
+        try:
+            set_blocking(not pause, request.get('seconds'))
+        except (OSError, ValueError, KeyError, TypeError):
+            return self.reply_json(
+                503, {'status': 'unavailable', 'message': 'Pi-hole did not accept the change.'}
+            )
+        try:
+            dns = pihole_data()
+        except (OSError, ValueError, KeyError, TypeError):
+            dns = None  # The write may have succeeded; a failed read cannot confirm it.
+        confirmed = dns is not None and dns.get('blocking') == ('disabled' if pause else 'enabled')
+        if dns is not None:
+            with _lock:
+                _data['dns'] = dns
+        if not confirmed:
+            return self.reply_json(
+                200, {'status': 'unverified', 'message': 'Pi-hole did not confirm the change.'}
+            )
+        return self.reply_json(
+            200,
+            {'status': 'applied', 'message': 'Blocking paused.' if pause else 'Blocking resumed.'},
+        )
+
+    def automation_settings_json(self, login):
         try:
             length = int(self.headers.get('Content-Length') or 0)
             if (
                 not 1 <= length <= 8192
                 or self.headers.get('Transfer-Encoding')
-                or self.headers.get('Content-Type', '').split(';', 1)[0]
-                != 'application/x-www-form-urlencoded'
+                or self.headers.get('Content-Type', '').split(';', 1)[0].strip()
+                != 'application/json'
             ):
                 raise ValueError
-            form = urllib.parse.parse_qs(
-                self.rfile.read(length).decode(), keep_blank_values=True, max_num_fields=3
-            )
-            if set(form) != {'t', 'apiKey', 'editorUrl'} or any(len(v) != 1 for v in form.values()):
+            request = json.loads(self.rfile.read(length))
+            if (
+                not isinstance(request, dict)
+                or set(request) != {'apiKey', 'editorUrl'}
+                or not all(isinstance(value, str) for value in request.values())
+            ):
                 raise ValueError
-        except (ValueError, UnicodeError):
-            return self.reply(400, b'Invalid connection settings', 'text/plain')
-        if not token_valid(login, form['t'][0]):
-            return self.reply(403, b'Expired form. Reload the page.', 'text/plain')
+        except (ValueError, UnicodeError, RecursionError):
+            return self.reply_json(
+                400, {'status': 'invalid', 'message': 'Invalid connection settings'}
+            )
+        outcome = save_automation_settings(request['apiKey'], request['editorUrl'])
+        return self.reply_json(200 if outcome['status'] == 'saved' else 400, outcome)
 
-        config = n8n_panel_config()
-        key = form['apiKey'][0].strip() or config.get('apiKey')
-        editor = form['editorUrl'][0].strip()
-        if not isinstance(key, str) or not N8N_KEY.fullmatch(key):
-            message = 'Enter an n8n API key.'
-        elif editor and (len(editor) > 253 or not N8N_EDITOR.fullmatch(editor)):
-            message = 'Use the HTTPS address ending in ts.net for the editor.'
-        elif (
-            n8n_rows(n8n_get('/api/v1/workflows?limit=1', key)) is None
-            or n8n_rows(n8n_get('/api/v1/executions?limit=1&includeData=false', key)) is None
-        ):
-            message = 'Check that n8n is running and the key can list workflows and executions.'
-        else:
-            try:
-                with tempfile.NamedTemporaryFile(
-                    mode='w', dir=os.path.dirname(N8N_PANEL_STATE), delete=False
-                ) as draft:
-                    try:
-                        json.dump({'apiKey': key, 'editorUrl': editor}, draft)
-                        draft.flush()
-                        os.fsync(draft.fileno())
-                        os.replace(draft.name, N8N_PANEL_STATE)
-                    finally:
-                        if os.path.exists(draft.name):
-                            os.unlink(draft.name)
-            except OSError:
-                message = 'Could not save the connection on this Pi.'
-            else:
-                self.send_response(303)
-                self.send_header('Location', '/automation')
-                self.send_header('Content-Length', '0')
-                self.send_header('Cache-Control', 'no-store')
-                self.end_headers()
-                return
-        return self.reply(
-            400, render_automation(login, message=message), 'text/html; charset=utf-8'
+    def storage_password(self, length):
+        """One stored drive password, only on the owner's request (gated above); never logged."""
+        try:
+            if (self.headers.get('Content-Type') or '').split(';', 1)[
+                0
+            ].strip() != 'application/json':
+                raise ValueError
+            request = json.loads(self.rfile.read(length))
+            if not isinstance(request, dict) or set(request) != {'drive', 'user'}:
+                raise ValueError
+        except (ValueError, UnicodeError, RecursionError):
+            return self.reply_json(400, {'status': 'invalid', 'message': 'Invalid request.'})
+        for account in storage_accounts():
+            if account['drive'] == request['drive'] and account['user'] == request['user']:
+                print('storage password shown to owner', file=sys.stderr, flush=True)
+                return self.reply_json(
+                    200, {'status': 'shown', 'message': '', 'password': account['password']}
+                )
+        return self.reply_json(
+            404, {'status': 'unavailable', 'message': 'This password is not saved on this Pi.'}
         )
+
+    def wake(self, login, length):
+        try:
+            if (self.headers.get('Content-Type') or '').split(';', 1)[
+                0
+            ].strip() != 'application/json':
+                raise ValueError
+            request = json.loads(self.rfile.read(length))
+            if (
+                not isinstance(request, dict)
+                or set(request) != {'address'}
+                or not isinstance(request['address'], str)
+            ):
+                raise ValueError
+            address = str(ipaddress.IPv4Address(request['address']))
+        except (ValueError, UnicodeError, RecursionError):
+            return self.reply_json(400, {'status': 'invalid', 'message': 'Invalid wake request.'})
+        mac = macs_by_ip().get(address)
+        protected = protected_macs()
+        with _lock:
+            device = next(
+                (dict(item) for item in _data.get('devices', []) if item.get('ip') == address), None
+            )
+        if device is None or mac is None:
+            return self.reply_json(
+                409, {'status': 'refused', 'message': 'Wake is unavailable for this device.'}
+            )
+        device.update(mac=mac, protected=protected is None or mac in protected)
+        if not network_map.can_wake(device, network_map.local_macs()):
+            return self.reply_json(
+                409, {'status': 'refused', 'message': 'Wake is unavailable for this device.'}
+            )
+        now = time.monotonic()
+        # Reserve before sending so concurrent requests cannot both pass the limit.
+        with _wake_lock:
+            for key, stamp in list(_wake_sent.items()):
+                if now - stamp >= 10:
+                    del _wake_sent[key]
+            limited = mac in _wake_sent or len(_wake_sent) >= 256
+            if not limited:
+                _wake_sent[mac] = now
+        if limited:
+            return self.reply_json(
+                429,
+                {
+                    'status': 'refused',
+                    'message': 'Wait 10 seconds before sending another wake signal.',
+                },
+            )
+        try:
+            packet = b'\xff' * 6 + bytes.fromhex(mac.replace(':', '')) * 16
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
+                connection.settimeout(2)
+                connection.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                if connection.sendto(packet, ('255.255.255.255', 9)) != len(packet):
+                    raise OSError('Incomplete wake packet')
+        except OSError:
+            outcome = {'status': 'unavailable', 'message': 'Could not send the wake signal.'}
+        else:
+            outcome = {
+                'status': 'sent',
+                'message': 'Wake signal sent. The device appears online once it starts.',
+            }
+        print(f'wake signal outcome={outcome["status"]} by owner', file=sys.stderr, flush=True)
+        return self.reply_json(200 if outcome['status'] == 'sent' else 503, outcome)
 
     def port(self, login, length):
         # JSON plus a custom header cannot be sent cross-site without CORS preflight, which

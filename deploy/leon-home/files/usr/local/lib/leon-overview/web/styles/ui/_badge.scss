@@ -1,0 +1,19 @@
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+.badge {
+  flex: none;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(238, 234, 227, 0.1);
+  color: color('ash');
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1;
+
+  &.is-new {
+    background: color('warn');
+    color: color('ink');
+  }
+}

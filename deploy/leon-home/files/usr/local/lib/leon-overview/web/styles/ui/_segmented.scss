@@ -1,0 +1,36 @@
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  min-height: $tap;
+  padding: 2px;
+  border-radius: var(--radius-s);
+  background: color('raised');
+}
+.segment {
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: color('ash');
+  font: inherit;
+  font-size: var(--text-s);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick) var(--ease-smooth-out),
+    color var(--duration-quick) var(--ease-smooth-out);
+
+  &[aria-checked='true'] {
+    background: rgba(238, 234, 227, 0.14);
+    color: color('bone');
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+}

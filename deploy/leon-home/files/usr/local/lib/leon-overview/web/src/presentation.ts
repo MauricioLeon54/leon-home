@@ -1,4 +1,5 @@
 import type { Connection, Feedback } from './contracts.js';
+import { dateLocale, t } from './i18n/index.js';
 
 type ElementConstructor<T extends Element> = new () => T;
 export function $(selector: string): HTMLElement;
@@ -37,21 +38,21 @@ export function icon(kind: Connection | undefined, className?: string): SVGSVGEl
   return svg;
 }
 export function date(value: number | null | undefined): string {
-  if (typeof value !== 'number') return 'No observation';
+  if (typeof value !== 'number') return t('No observation');
   const moment = new Date(value * 1000),
     today = new Date();
-  const clock = moment.toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' });
-  if (moment.toDateString() === today.toDateString()) return 'Today ' + clock;
+  const clock = moment.toLocaleTimeString(dateLocale, { hour: 'numeric', minute: '2-digit' });
+  if (moment.toDateString() === today.toDateString()) return t('Today ') + clock;
   today.setDate(today.getDate() - 1);
-  if (moment.toDateString() === today.toDateString()) return 'Yesterday ' + clock;
-  return moment.toLocaleDateString('en', { month: 'short', day: 'numeric' }) + ', ' + clock;
+  if (moment.toDateString() === today.toDateString()) return t('Yesterday ') + clock;
+  return moment.toLocaleDateString(dateLocale, { month: 'short', day: 'numeric' }) + ', ' + clock;
 }
 export function time(value: number | null | undefined): string {
-  return typeof value === 'number' ? new Date(value * 1000).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' }) : '—';
+  return typeof value === 'number' ? new Date(value * 1000).toLocaleTimeString(dateLocale, { hour: 'numeric', minute: '2-digit' }) : '—';
 }
 export function mbps(value: number | null | undefined): string {
-  return typeof value === 'number' ? value.toLocaleString('en', { maximumFractionDigits: value < 10 ? 2 : 1 }) : '—';
+  return typeof value === 'number' ? value.toLocaleString(dateLocale, { maximumFractionDigits: value < 10 ? 2 : 1 }) : '—';
 }
 export function speed(value: number | null | undefined): string {
-  return typeof value !== 'number' ? '—' : value >= 1000 ? (value / 1000).toLocaleString('en') + ' Gbps' : value + ' Mbps';
+  return typeof value !== 'number' ? '—' : value >= 1000 ? (value / 1000).toLocaleString(dateLocale) + ' Gbps' : value + ' Mbps';
 }

@@ -45,26 +45,49 @@ Readings keep three visibly different states:
 
 ## Styles are Sass (`web/styles/`)
 
-| File                         | Owns                                                                                |
-| ---------------------------- | ----------------------------------------------------------------------------------- |
-| `_tokens.scss`               | The only source of colours, type, radii, motion, breakpoints and `color()`          |
-| `_root.scss`                 | Emits every token map as a CSS custom property (TypeScript reads motion)            |
-| `_mixins.scss`               | `phone`, `narrow`, `wide`, `desktop`, `reduced-motion`, `hover`, helpers            |
-| `_base.scss`                 | Reset, type, 44 px buttons, inputs, dots, badges, sections, readings, rows, tab bar |
-| `_motion.scss`               | transitions.dev recipes: accordion, modal, text swap                                |
-| `home.scss`, `updates.scss`  | Page entries                                                                        |
-| `network-map.scss`, `map/_*` | Network view: chrome, topology, inspector, traffic, ports                           |
+| File                        | Owns                                                                                |
+| --------------------------- | ----------------------------------------------------------------------------------- |
+| `_tokens.scss`              | The only source of colours, type, radii, motion, breakpoints and `color()`          |
+| `_root.scss`                | Emits every token map as a CSS custom property (TypeScript reads motion)            |
+| `_mixins.scss`              | `phone`, `narrow`, `wide`, `desktop`, `reduced-motion`, `hover`, helpers            |
+| `_base.scss`                | Reset, type, 44 px buttons, inputs, dots, badges, sections, readings, rows, tab bar |
+| `_motion.scss`              | transitions.dev recipes: accordion, modal, text swap                                |
+| `leon.scss`                 | App entry: imports the root, shell, component and page partials below               |
+| `home.scss`, `updates.scss` | Page entries                                                                        |
+| `ui/_*.scss`                | One partial per component (`ui/` in `src/`)                                         |
+| `pages/_*.scss`             | Page-specific layout: home, network, settings, storage                              |
 
 Use `color('name')` for colours (an unknown name fails the build), `var(--…)` for the other
 tokens and the mixins for media queries. Never write a hex value outside `_tokens.scss`
 except translucent tints derived from Bone or Obsidian. `scripts/build-web.mjs` compiles each
 entry with the pinned `sass` package and minifies it with esbuild; the served names
-(`home.css`, `network-map.css`, `updates.css`) and the release file list do not change. The
+(`home.css`, `updates.css`, `leon.css`) and the release file list do not change. The
 updates page loads `home.css` first, so `updates.scss` emits only its own layout.
 
 `web/src/motion.ts` sequences the transitions: `openDialog`/`closeDialog`/`bindDialog`,
 `swapText` for outcome messages and `bindDisclosures`/`setDisclosure` for collapsed sections.
 Closed disclosure panels are `inert`, so hidden content is not focusable.
+
+## Languages
+
+English and Spanish, chosen in Settings and remembered per device; the first visit follows the
+device's language. `src/i18n/` has no dependency: `t('English text {0}', value)` only compiles when
+`es.ts` has that exact key, so a missing translation fails `pnpm typecheck`. Changing the language
+reloads the app. `serverText()` translates known wording sent by the Pi and leaves names and other data
+untouched. Push notifications keep their own wording.
+
+## App shell and components
+
+The panel is one app (see `docs/APP-STRUCTURE.md` for routes, API and phases). `overview.py`
+serves one shell for every app route, `src/main.ts` loads `/api/v1/session` and starts
+`src/core/router.ts` (tab stacks, back button, View Transitions). All four tabs run in the app;
+the only other page is the family edition's `/updates`.
+
+Build pages only from `src/ui/` (section, inset list rows, switch, reading, segmented control,
+sheet, confirm, toast, banner, empty, skeleton, badge, status dot, charts); each has one Sass
+partial in `styles/ui/`. A switch shows the requested position only while pending and reverts on
+`refused` or `unverified`; a reading never renders unknown as zero. `danger` is reserved for
+destructive actions and is distinct from `warn`.
 
 ## Motion
 

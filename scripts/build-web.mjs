@@ -20,7 +20,7 @@ const stage = await mkdtemp(fileURLToPath(new URL('.build/web-stage-', root)));
 try {
   const result = await build({
     absWorkingDir: fileURLToPath(root),
-    entryPoints: [new URL('src/app.ts', web), new URL('src/home.ts', web), new URL('src/updates.ts', web)].map(fileURLToPath),
+    entryPoints: [fileURLToPath(new URL('src/updates.ts', web)), { in: fileURLToPath(new URL('src/main.ts', web)), out: 'leon' }],
     outdir: stage,
     bundle: true,
     format: 'esm',
@@ -43,7 +43,7 @@ try {
   });
   // Styles are written in Sass (web/styles); each entry compiles to the served stylesheet of the same name.
   const stylesheetSizes = {};
-  for (const name of ['network-map', 'home', 'updates']) {
+  for (const name of ['home', 'updates', 'leon']) {
     const entry = fileURLToPath(new URL(`styles/${name}.scss`, web));
     const compiled = compile(entry, { style: 'expanded', sourceMap: false });
     const result = await transform(compiled.css, { loader: 'css', minify: true, target: ['safari16.4', 'chrome110'], legalComments: 'none' });
@@ -58,9 +58,8 @@ try {
   }
   const report = {
     unbundledJavaScriptBytes,
-    bundledAppBytes: (await readFile(join(stage, 'app.js'))).length,
-    bundledHomeBytes: (await readFile(join(stage, 'home.js'))).length,
     bundledUpdatesBytes: (await readFile(join(stage, 'updates.js'))).length,
+    bundledLeonBytes: (await readFile(join(stage, 'leon.js'))).length,
     stylesheetSizes,
   };
   await rm(previous, { recursive: true, force: true });
@@ -79,7 +78,7 @@ try {
   }
   await rm(previous, { recursive: true, force: true });
   await writeFile(new URL('.build/web-build-report.json', root), JSON.stringify(report, null, 2) + '\n');
-  console.log('Built optimized TypeScript map, home, updates, worker and styles; no Node runtime on the Pi.');
+  console.log('Built optimized TypeScript app (leon), updates, worker and styles; no Node runtime on the Pi.');
   console.log(JSON.stringify(report));
 } finally {
   await rm(stage, { recursive: true, force: true });

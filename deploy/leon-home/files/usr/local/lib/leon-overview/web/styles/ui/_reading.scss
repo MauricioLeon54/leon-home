@@ -1,0 +1,51 @@
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+.readings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 18px;
+
+  &.is-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  @include wide {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+
+    &.is-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+}
+.reading {
+  min-width: 0;
+}
+.reading-value {
+  display: block;
+  @include numeric;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere; // worded values such as "Throttled earlier" wrap instead of truncating
+
+  .is-earlier &,
+  .is-unknown & {
+    color: color('ash');
+  }
+  .is-good & {
+    color: color('good');
+  }
+  .is-warn & {
+    color: color('warn');
+  }
+}
+.reading-label,
+.reading-note {
+  display: block;
+  color: color('ash');
+  font-size: var(--text-s);
+}
+.reading-note {
+  font-size: 11px;
+}

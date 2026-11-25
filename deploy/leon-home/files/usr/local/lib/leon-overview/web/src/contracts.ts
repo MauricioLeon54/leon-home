@@ -32,6 +32,8 @@ export interface Device {
   canRename: boolean;
   paused: boolean;
   canPause: boolean;
+  // Wake-on-LAN: the server knows this device's MAC and it is not the router or this Pi.
+  canWake: boolean;
   pauseSchedule: Schedule | null;
   traffic: Traffic | null;
 }
@@ -65,8 +67,11 @@ export type OutageCause = 'provider' | 'home';
 export interface InternetHealth {
   samples: number;
   availability: number | null;
-  current: { at: number; state: 'up' | OutageCause; internetMs: number | null; routerMs: number | null } | null;
+  current: { at: number; state: 'up' | OutageCause; internetMs: number | null; routerMs: number | null; dnsMs: number | null; routerLossPercent: number | null } | null;
   series: Array<readonly [number, number | null]>;
+  routerLossSeries: Array<number | null>;
+  internetLatencySeries: Array<number | null>;
+  dnsLatencySeries: Array<number | null>;
   outages: Array<{ start: number; end: number | null; seconds: number; cause: OutageCause }>;
 }
 export interface Snapshot {

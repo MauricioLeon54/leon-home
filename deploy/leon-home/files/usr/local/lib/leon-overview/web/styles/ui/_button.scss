@@ -1,0 +1,61 @@
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+.btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: $tap;
+  padding: 10px 18px;
+  border: 1px solid color('line-strong');
+  border-radius: 999px;
+  background: transparent;
+  color: color('bone');
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    transform var(--duration-quick) var(--ease-smooth-out),
+    background-color var(--duration-quick) var(--ease-smooth-out),
+    opacity var(--duration-quick) var(--ease-smooth-out);
+
+  &.is-primary {
+    background: color('bone');
+    border-color: color('bone');
+    color: color('ink');
+  }
+  &.is-danger {
+    background: color('danger');
+    border-color: color('danger');
+    color: color('ink');
+  }
+  &:active:not(:disabled) {
+    transform: scale(var(--scale-medium));
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  @include hover {
+    &.is-plain:hover:not(:disabled) {
+      background: rgba(238, 234, 227, 0.06);
+    }
+  }
+}
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.link-button {
+  appearance: none;
+  min-height: $tap;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: color('ash');
+  font: inherit;
+  font-size: var(--text-s);
+  cursor: pointer;
+}
