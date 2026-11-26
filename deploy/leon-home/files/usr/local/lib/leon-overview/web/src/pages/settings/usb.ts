@@ -19,7 +19,7 @@ export function renderUsb(context: RouteContext): PageView {
         label: t('USB ports'),
         checked: io.isUnavailable ? null : switchable(usb.power),
         isDisabled: io.isUnavailable || blockedBy !== null,
-        onChange: async requested => {
+        async onChange(requested) {
           if (requested) return io.act('/api/v1/hardware/usb-power', { state: 'on' });
           const isConfirmed = await confirm({
             title: t('Turn off USB power?'),

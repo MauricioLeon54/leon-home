@@ -37,7 +37,7 @@ export function linksSection(view: HomeView): HTMLElement {
   return section({}, [
     list([
       { kind: 'navigation', title: t('Pi-hole admin'), href: piholeAdmin },
-      ...(routerSettings ? [{ kind: 'navigation', title: t('Router settings'), href: routerSettings } satisfies ListRow] : []),
+      ...(routerSettings !== null && routerSettings !== '' ? [{ kind: 'navigation', title: t('Router settings'), href: routerSettings } satisfies ListRow] : []),
     ]),
   ]);
 }

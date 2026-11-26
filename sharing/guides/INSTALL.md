@@ -113,16 +113,21 @@ DNS changes require a separate configuration appropriate to your router.
 Router readings and controls support the web interface of the HUAWEI WiFi BE3 Pro. Other
 routers stay unavailable; the inventory map, DNS and panel work without a router connection.
 
-1. Open **Network** on the panel. When the Pi has no router connection, the locked notice asks
-   for a new LEÓN vault passphrase of at least 12 characters, the same passphrase again and the
-   router administrator password. Choose **Connect router**.
-2. The Pi first signs in to its default gateway with that password. Only if the router accepts
-   it, the Pi encrypts the router address and password with `age` under your passphrase in
-   `/var/lib/leon-router`, readable only by the router monitor account.
-3. Keep the passphrase in your password manager. After the Pi or the monitor restarts, router
-   readings are locked until you unlock them with the passphrase. One attempt per minute is
-   accepted; an unlock before the router is connected does not count. DNS, the panel and the map
-   keep working while locked.
+1. Open **Network** on the panel and type the router administrator password once. Choose
+   **Connect router**. There is no passphrase to invent or remember.
+2. The Pi first signs in to its default gateway with that password. Only if the router accepts it,
+   the Pi keeps the router address and password encrypted with its own key in `/var/lib/leon-router`,
+   readable only by the router monitor account.
+3. After the Pi, the router or the monitor restarts, LEÓN reconnects by itself. It never repeats a
+   password the router refused: if the password changed, **Network** asks for the new one. One
+   attempt per minute is accepted. DNS, the panel and the map keep working meanwhile.
+
+Because the Pi can open the router without you, anyone with administrative access to the Pi or its
+SD card can also recover the router password. To forget it, an administrator removes
+`/var/lib/leon-router/auto-unlock.key` and `auto-unlock.age` and restarts `leon-router.service`.
+Maintenance and application updates restart the router monitor, including on rollback.
+After updating a Pi connected before this version, connect once as above. Its earlier
+`router.age` is left untouched. A refused saved entry is forgotten so a restart cannot retry it.
 
 The monitor reads device traffic, Wi-Fi status and Ethernet ports every 15 seconds. Each change
 is one verified operation and is never retried automatically:
@@ -139,9 +144,7 @@ is one verified operation and is never retried automatically:
 - **Device names** come from the router (the name set in its app, or the device's own name) until
   you rename a device in the panel.
 
-If the router password changes, an administrator removes `/var/lib/leon-router/router.age` and
-restarts `leon-router.service`, then you connect again. Anyone with administrative access to the
-Pi can operate the router monitor while it is unlocked.
+Anyone with administrative access to the Pi can operate the router monitor.
 
 ## Support and recovery
 

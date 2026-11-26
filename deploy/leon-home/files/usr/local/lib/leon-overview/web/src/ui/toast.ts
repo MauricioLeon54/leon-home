@@ -8,7 +8,7 @@ let region: HTMLElement | null = null,
   timer: ReturnType<typeof setTimeout> | undefined;
 
 function liveRegion(): HTMLElement {
-  if (region?.isConnected) return region;
+  if (region?.isConnected === true) return region;
   region = h('div', { className: 'toast-region', attrs: { 'role': 'status', 'aria-live': 'polite', 'aria-atomic': 'true' } });
   document.body.append(region);
   return region;

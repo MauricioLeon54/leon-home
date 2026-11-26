@@ -61,13 +61,29 @@ async function start(browserType, { home, onPause } = {}) {
   page.on('console', message => {
     if (message.type() === 'error' && !message.text().includes('Failed to load resource')) errors.push(message.text());
   });
+  const requests = [];
+  page.on('request', request => requests.push(new URL(request.url()).pathname));
+  await page.addInitScript(() => {
+    globalThis.pollTicks = 0;
+    const interval = globalThis.setInterval.bind(globalThis);
+    globalThis.setInterval = (callback, delay, ...args) =>
+      interval(() => {
+        globalThis.pollTicks++;
+        callback(...args);
+      }, delay);
+    globalThis.setHidden = hidden => {
+      Object.defineProperty(globalThis.document, 'hidden', { configurable: true, value: hidden });
+      Object.defineProperty(globalThis.document, 'visibilityState', { configurable: true, value: hidden ? 'hidden' : 'visible' });
+      globalThis.document.dispatchEvent(new Event('visibilitychange'));
+    };
+  });
   await page.clock.install();
   await page.route('https://leon.test/**', async route => {
     const request = route.request();
     const { pathname } = new URL(request.url());
     if (pathname === '/leon/v1/session') return route.fulfill({ contentType: 'application/json', body: JSON.stringify(session) });
     if (pathname === '/leon/v1/home') {
-      const reply = state.home(++state.homeResponses);
+      const reply = await state.home(++state.homeResponses);
       return route.fulfill({ status: reply.status, contentType: 'application/json', body: typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body) });
     }
     if (pathname === '/leon/v1/dns/pause') {
@@ -83,6 +99,7 @@ async function start(browserType, { home, onPause } = {}) {
   });
   return {
     page,
+    requests,
     errors,
     state,
     async close() {
@@ -92,51 +109,53 @@ async function start(browserType, { home, onPause } = {}) {
   };
 }
 
+function appTest(browserType, name, verify, options) {
+  test(name, async () => {
+    const app = await start(browserType, options);
+    try {
+      await verify(app);
+    } finally {
+      await app.close();
+    }
+  });
+}
+
 for (const browserType of [chromium, webkit]) {
-  test(`${browserType.name()} shell boots with Home readings and em dashes for unknown values`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/');
-      await app.page.getByText('Everything is running').waitFor();
-      assert.equal(await app.page.locator('.large-title').textContent(), 'Home');
-      const internet = app.page.locator('.reading', { hasText: 'Internet' }).first();
-      assert.match(await internet.textContent(), /12 ms/);
-      const routerDns = app.page.locator('.reading', { hasText: 'Router DNS' });
-      assert.equal(await routerDns.locator('.reading-value').textContent(), '—');
-      assert.equal(await app.page.locator('.tabbar a[aria-current="page"]').textContent(), 'Home');
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} shell boots with Home readings and em dashes for unknown values`, async app => {
+    await app.page.goto('https://leon.test/');
+    await app.page.getByText('Everything is running').waitFor();
+    assert.equal(await app.page.locator('.large-title').textContent(), 'Home');
+    const internet = app.page.locator('.reading', { hasText: 'Internet' }).first();
+    assert.match(await internet.textContent(), /12 ms/);
+    const routerDns = app.page.locator('.reading', { hasText: 'Router DNS' });
+    assert.equal(await routerDns.locator('.reading-value').textContent(), '—');
+    assert.equal(await app.page.locator('.tabbar a[aria-current="page"]').textContent(), 'Home');
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} Settings pushes About with a labelled back button and the active tab pops to root`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/settings');
-      await app.page.getByRole('link', { name: 'About' }).click();
-      await app.page.getByText('Private to your Tailscale account.').waitFor();
-      assert.equal(new URL(app.page.url()).pathname, '/settings/about');
-      assert.equal(await app.page.locator('.nav-back').textContent(), 'Settings');
-      await app.page.locator('.nav-back').click();
-      await app.page.getByRole('link', { name: 'Router & ports' }).waitFor();
-      assert.equal(new URL(app.page.url()).pathname, '/settings');
-      assert.equal(await app.page.locator('.nav-back').isHidden(), true);
-      await app.page.getByRole('link', { name: 'About' }).click();
-      await app.page.getByText('owner@example.test').waitFor();
-      await app.page.locator('.tabbar a[data-tab="settings"]').click();
-      await app.page.getByRole('link', { name: 'Router & ports' }).waitFor();
-      assert.equal(new URL(app.page.url()).pathname, '/settings');
-      assert.equal(await app.page.getByRole('link', { name: 'Automation' }).count(), 0);
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} Settings pushes About with a labelled back button and the active tab pops to root`, async app => {
+    await app.page.goto('https://leon.test/settings');
+    await app.page.getByRole('link', { name: 'About' }).click();
+    await app.page.getByText('Private to your Tailscale account.').waitFor();
+    assert.equal(new URL(app.page.url()).pathname, '/settings/about');
+    assert.equal(await app.page.locator('.nav-back').textContent(), 'Settings');
+    await app.page.locator('.nav-back').click();
+    await app.page.getByRole('link', { name: 'Router & ports' }).waitFor();
+    assert.equal(new URL(app.page.url()).pathname, '/settings');
+    assert.equal(await app.page.locator('.nav-back').isHidden(), true);
+    await app.page.getByRole('link', { name: 'About' }).click();
+    await app.page.getByText('owner@example.test').waitFor();
+    await app.page.locator('.tabbar a[data-tab="settings"]').click();
+    await app.page.getByRole('link', { name: 'Router & ports' }).waitFor();
+    assert.equal(new URL(app.page.url()).pathname, '/settings');
+    assert.equal(await app.page.getByRole('link', { name: 'Automation' }).count(), 0);
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} a failed refresh keeps earlier readings and shows the stale banner after 90 s`, async () => {
-    const app = await start(browserType, { home: count => (count === 1 ? { status: 200, body: homeView() } : { status: 503, body: 'Unavailable' }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} a failed refresh keeps earlier readings and shows the stale banner after 90 s`,
+    async app => {
       await app.page.goto('https://leon.test/');
       await app.page.getByText('Everything is running').waitFor();
       await app.page.clock.runFor(30_001);
@@ -149,10 +168,9 @@ for (const browserType of [chromium, webkit]) {
       assert.match(await app.page.locator('.reading', { hasText: 'Internet' }).first().textContent(), /12 ms/);
       assert.match(await app.page.locator('.reading', { hasText: 'Internet' }).first().textContent(), /Earlier/);
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
+    },
+    { home: count => (count === 1 ? { status: 200, body: homeView() } : { status: 503, body: 'Unavailable' }) }
+  );
 
   test(`${browserType.name()} pausing Pi-hole posts the token and confirms with a toast`, async () => {
     let posted;
@@ -168,16 +186,127 @@ for (const browserType of [chromium, webkit]) {
     }
   });
 
-  test(`${browserType.name()} malformed Home JSON leaves the shell running`, async () => {
-    const app = await start(browserType, { home: () => ({ status: 200, body: { status: 'not a view' } }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} malformed Home JSON leaves the shell running`,
+    async app => {
       await app.page.goto('https://leon.test/');
       await app.page.getByText('LEÓN Home is not answering').first().waitFor();
       assert.equal(await app.page.locator('.tabbar').isVisible(), true);
       assert.equal(await app.page.locator('.large-title').textContent(), 'Home');
       assert.deepEqual(app.errors, []);
+    },
+    { home: () => ({ status: 200, body: { status: 'not a view' } }) }
+  );
+}
+
+for (const browserType of [chromium, webkit]) {
+  appTest(browserType, `${browserType.name()} measures app requests and hidden work`, async app => {
+    await app.page.goto('https://leon.test/');
+    await app.page.getByText('Everything is running').waitFor();
+    const initial = [...app.requests];
+    await app.page.clock.runFor(30001);
+    await app.page.getByText('Everything is running').waitFor();
+    const refresh = app.requests.slice(initial.length);
+    await app.page.evaluate(() => globalThis.setHidden(true));
+    const before = app.requests.length;
+    const ticks = await app.page.evaluate(() => globalThis.pollTicks);
+    await app.page.clock.runFor(120_001);
+    const hiddenTicks = (await app.page.evaluate(() => globalThis.pollTicks)) - ticks;
+    console.log(JSON.stringify({ measurement: 'app', browser: browserType.name(), initial, refresh, hiddenRequests: app.requests.length - before, hiddenTicks }));
+    assert.equal(app.requests.length - before, 0);
+    assert.equal(hiddenTicks, 0);
+    const resumed = app.page.waitForResponse(response => response.url().endsWith('/leon/v1/home'));
+    await app.page.evaluate(() => globalThis.setHidden(false));
+    await resumed;
+    assert.deepEqual(app.errors, []);
+  });
+}
+
+for (const browserType of [chromium, webkit]) {
+  test(`${browserType.name()} a pending Home fetch survives repeated visible events without duplication`, async () => {
+    let release;
+    const app = await start(browserType, {
+      home: () =>
+        new Promise(resolve => {
+          release = resolve;
+        }),
+    });
+    try {
+      const requested = app.page.waitForRequest(request => request.url().endsWith('/leon/v1/home'));
+      await app.page.goto('https://leon.test/');
+      await requested;
+      await app.page.evaluate(() => {
+        globalThis.setHidden(false);
+        globalThis.setHidden(false);
+      });
+      await app.page.clock.runFor(2000);
+      assert.equal(app.state.homeResponses, 1);
+      release({ status: 200, body: homeView() });
+      await app.page.getByText('Everything is running').waitFor();
+      assert.deepEqual(app.errors, []);
     } finally {
       await app.close();
     }
   });
+}
+
+for (const browserType of [chromium, webkit]) {
+  for (const colorScheme of ['light', 'dark']) {
+    test(`${browserType.name()} ${colorScheme} system theme keeps readable labels, focus and 44 px controls`, async () => {
+      const app = await start(browserType);
+      try {
+        await app.page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+        await app.page.goto('https://leon.test/');
+        await app.page.getByText('Everything is running').waitFor();
+        const controls = app.page.locator('button:visible, .tabbar a');
+        for (const control of await controls.all()) {
+          const box = await control.boundingBox();
+          assert.ok(box.width >= 44 && box.height >= 44);
+          assert.ok((await control.getAttribute('aria-label')) || (await control.textContent()).trim());
+        }
+        const nextTab = app.page.locator('.tabbar a').nth(1);
+        if (browserType === webkit) {
+          await nextTab.focus(); // WebKit does not move Tab focus between links by default
+        } else {
+          await app.page.locator('.tabbar a').first().focus();
+          await app.page.keyboard.press('Tab');
+        }
+        assert.equal(await nextTab.evaluate(element => element === globalThis.document.activeElement), true);
+        const focus = await nextTab.evaluate(element => globalThis.getComputedStyle(element).outlineStyle);
+        assert.equal(focus, 'solid');
+        const colors = await app.page
+          .locator('.reading-label')
+          .first()
+          .evaluate(element => {
+            const style = globalThis.getComputedStyle(element);
+            const root = globalThis.getComputedStyle(globalThis.document.documentElement);
+            return { text: style.color, background: root.getPropertyValue('--raised').trim(), animation: style.animationName, transition: style.transitionDuration };
+          });
+        assert.ok(contrast(colors.text, colors.background) >= 4.5);
+        assert.equal(colors.animation, 'none');
+        assert.equal(colors.transition, '0s');
+        assert.deepEqual(app.errors, []);
+      } finally {
+        await app.close();
+      }
+    });
+  }
+}
+function contrast(foreground, background) {
+  const luminance = color => {
+    const values = color.startsWith('#')
+      ? color
+          .slice(1)
+          .match(/../g)
+          .map(value => parseInt(value, 16))
+      : color.match(/\d+/g).slice(0, 3).map(Number);
+    return values
+      .map(value => value / 255)
+      .map(value => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4))
+      .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+  };
+  const first = luminance(foreground),
+    second = luminance(background);
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
 }

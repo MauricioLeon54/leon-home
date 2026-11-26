@@ -1,5 +1,6 @@
 import type { HomeView } from '../../contracts/home.js';
 import { h } from '../../core/dom.js';
+import { isNonzeroNumber } from '../../core/format.js';
 import { count } from '../../core/format.js';
 import { t } from '../../i18n/index.js';
 import { button } from '../../ui/button.js';
@@ -19,7 +20,7 @@ export interface PiHoleActions {
 
 function stateText(pihole: NonNullable<HomeView['pihole']>): string {
   if (pihole.blocking === 'enabled') return t('Blocking on');
-  return pihole.pausedSecondsLeft ? t('Paused · {0} min left', Math.floor(pihole.pausedSecondsLeft / 60)) : t('Blocking paused');
+  return isNonzeroNumber(pihole.pausedSecondsLeft) ? t('Paused · {0} min left', Math.floor(pihole.pausedSecondsLeft / 60)) : t('Blocking paused');
 }
 
 function controls(pihole: NonNullable<HomeView['pihole']>, actions: PiHoleActions): HTMLElement {
@@ -30,7 +31,7 @@ function controls(pihole: NonNullable<HomeView['pihole']>, actions: PiHoleAction
           button({ label: t('Pause 30 min'), isDisabled: actions.isBusy, onPress: () => actions.onPause(1800) }),
         ]
       : [button({ label: t('Resume blocking'), variant: 'primary', isDisabled: actions.isBusy, onPress: actions.onResume })];
-  for (const element of buttons) element.dataset.focusKey = `pihole-${element.textContent ?? ''}`;
+  for (const element of buttons) element.dataset.focusKey = `pihole-${element.textContent}`;
   return h('div', { className: 'buttons' }, buttons);
 }
 

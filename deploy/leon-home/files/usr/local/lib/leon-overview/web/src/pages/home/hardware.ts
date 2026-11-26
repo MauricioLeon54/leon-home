@@ -23,7 +23,7 @@ export function piSection(view: HomeView, context: HomeContext): HTMLElement {
     card([
       readingGrid(
         [
-          metric(context, t('Temperature'), pi.temperatureCelsius, celsius, isHot ? 'warn' : undefined),
+          metric({ ...context, tone: isHot ? 'warn' : undefined }, t('Temperature'), pi.temperatureCelsius, celsius),
           metric(context, t('CPU'), pi.cpuPercent, value => percent(value)),
           metric(context, t('Load'), pi.load1, value => value.toFixed(2)),
           metric(context, t('Free memory'), pi.memoryAvailableBytes, bytes),

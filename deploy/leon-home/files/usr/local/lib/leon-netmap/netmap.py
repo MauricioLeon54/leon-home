@@ -242,7 +242,7 @@ def merge(devices, rtts, arp, router, now):
         if arp.get(ip):
             item['mac'] = arp[ip][0]
         item['online'] = 1 if seen else 0
-        item['strip'] = (item.get('strip', []) + [1 if seen else 0])[-PRESENCE:]
+        item['strip'] = ([*item.get('strip', []), 1 if seen else 0])[-PRESENCE:]
         if seen:
             item['last_seen'] = now
             item['rtt_ms'] = rtts.get(ip)

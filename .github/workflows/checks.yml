@@ -5,6 +5,18 @@ on:
 permissions:
   contents: read
 jobs:
+  rust-msrv:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install minimum supported Rust
+        run: rustup toolchain install 1.89.0 --profile minimal
+      - name: Check all inventory targets with the locked dependencies on MSRV
+        working-directory: rust/leon-netmap
+        run: cargo +1.89.0 check --locked --all-targets
   application:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 25

@@ -10,8 +10,8 @@ export interface HomeContext {
 type MetricTone = 'good' | 'warn' | undefined;
 
 /** A reading from a nullable number: unknown stays an em dash; stale data is labelled "Earlier". */
-export function metric(context: HomeContext, label: string, raw: number | null, format: (value: number) => string, tone?: MetricTone): HTMLElement {
-  const state: ReadingState = context.isStale ? { kind: 'earlier', at: context.observedAt } : { kind: 'current', tone };
+export function metric(context: HomeContext & { tone?: MetricTone }, label: string, raw: number | null, format: (value: number) => string): HTMLElement {
+  const state: ReadingState = context.isStale ? { kind: 'earlier', at: context.observedAt } : { kind: 'current', tone: context.tone };
   return reading({ label, value: raw === null ? null : format(raw), state });
 }
 

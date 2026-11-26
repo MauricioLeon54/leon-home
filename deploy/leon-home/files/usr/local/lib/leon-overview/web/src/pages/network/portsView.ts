@@ -36,7 +36,7 @@ export interface PortsProps {
 }
 
 function portLabel(port: Port): string {
-  return port.wan ? 'WAN' : `LAN ${port.port}`;
+  return (port.wan ?? false) ? 'WAN' : `LAN ${port.port}`;
 }
 function isProtected(port: Port, snapshot: Snapshot): boolean {
   return port.wan === true || !snapshot.routerTelemetry.controllablePorts.includes(port.port);
@@ -112,27 +112,23 @@ async function setPort(port: Port, enabled: boolean, props: PortsProps): Promise
   return switchOutcome(status);
 }
 
+function portDetail(port: Port, locked: boolean): string {
+  if (port.wan === true) return t('WAN port · always protected');
+  if (locked) return t('Protected · not in the allowed list');
+  if (port.enabled === false) return t('Disabled');
+  if (port.link === 'up') return t('Enabled · {0}', speed(port.speedMbps));
+  return port.enabled === true ? t('Enabled · no cable') : t('Unknown state');
+}
+
 /** One switch per port. While pending it shows the requested position; afterwards only the router's re-read moves it. */
 function switches(ports: ReadonlyArray<Port>, props: PortsProps): HTMLElement {
   const { snapshot, memory, state } = props,
     rows = ports.map((port): ListRow => {
       const locked = port.enabled !== false && isProtected(port, snapshot),
         outcome = memory.portOutcome?.port === port.port ? feedbackFor(OUTCOMES, memory.portOutcome.status, 'invalid') : null,
-        detail =
-          outcome?.[1] ??
-          (port.wan
-            ? t('WAN port · always protected')
-            : locked
-              ? t('Protected · not in the allowed list')
-              : port.enabled === false
-                ? t('Disabled')
-                : port.link === 'up'
-                  ? t('Enabled · {0}', speed(port.speedMbps))
-                  : port.enabled === true
-                    ? t('Enabled · no cable')
-                    : t('Unknown state')),
+        detail = outcome?.[1] ?? portDetail(port, locked),
         toggle = createSwitch({
-          label: t('{0} enabled', port.wan ? 'WAN' : t('Port {0}', port.port)),
+          label: t('{0} enabled', (port.wan ?? false) ? 'WAN' : t('Port {0}', port.port)),
           checked: port.enabled,
           isDisabled: state.hasFailed || props.token === '' || locked,
           onChange: requested => props.controls.run(() => setPort(port, requested, props)),
@@ -142,38 +138,42 @@ function switches(ports: ReadonlyArray<Port>, props: PortsProps): HTMLElement {
   return list(rows);
 }
 
-function wifiSection(snapshot: Snapshot, state: NetworkState): HTMLElement {
-  const isCurrent = trafficCurrent(state),
-    wifi = snapshot.routerTelemetry.wifi,
-    meta = isCurrent ? t('Router, {0}', time(snapshot.routerTelemetry.observedAt)) : t('No current reading');
-  if (!isCurrent) return section({ title: 'Wi-Fi', meta }, [h('p', { className: 'note', text: t('No current Wi-Fi reading. Unlock the router session to see readings.') })]);
-  const networks: Array<ListRow> = [];
-  for (const network of wifi?.networks ?? []) {
-    if (!network.ssid) continue;
-    const band = bandName(network.band) !== t('Unknown') ? bandName(network.band) : network.band || t('Unknown band'),
-      // Counted from the router's own device list (devices on that band now), not its configured limits.
-      onBand = snapshot.devices.filter(device => device.traffic?.band && String(device.traffic.band).startsWith(String(network.band).slice(0, 3))).length,
-      isOff = network.WifiEnable === false;
-    networks.push({
-      kind: 'value',
-      title: `${network.ssid}, ${band}`,
-      detail: isOff ? t('Turned off') : `${network.Channel ? t('Channel {0}', String(network.Channel)) : t('Automatic channel')} · ${onBand} ${onBand === 1 ? t('device') : t('devices')}`,
-      value: isOff ? t('Off') : t('On'),
-      leading: { kind: 'dot', tone: isOff ? 'idle' : 'good' },
-    });
-  }
+function appendGuestNetwork(wifi: Snapshot['routerTelemetry']['wifi'], networks: Array<ListRow>): void {
   const guest = wifi?.guest;
   if (guest) {
     const minutes = typeof guest.restSeconds === 'number' ? Math.round(guest.restSeconds / 60) : null,
       left = minutes === null ? t('No time limit reported') : minutes >= 60 ? t('{0} h {1} min left', Math.floor(minutes / 60), minutes % 60) : t('{0} min left', minutes);
     networks.push({
       kind: 'value',
-      title: t('Guest network{0}', guest.ssid ? `, ${guest.ssid}` : ''),
+      title: t('Guest network{0}', Boolean(guest.ssid) ? `, ${guest.ssid}` : ''),
       detail: guest.enabled ? left : t('Turned off'),
       value: guest.enabled ? t('On') : t('Off'),
       leading: { kind: 'dot', tone: guest.enabled ? 'good' : 'idle' },
     });
   }
+}
+
+function wifiNetworks(snapshot: Snapshot): Array<ListRow> {
+  const wifi = snapshot.routerTelemetry.wifi;
+  const networks: Array<ListRow> = [];
+  for (const network of wifi?.networks ?? []) {
+    if (!Boolean(network.ssid)) continue;
+    const band = bandName(network.band) !== t('Unknown') ? bandName(network.band) : network.band === '' ? t('Unknown band') : (network.band ?? t('Unknown band')),
+      // Counted from the router's own device list (devices on that band now), not its configured limits.
+      onBand = snapshot.devices.filter(device => (device.traffic?.band && String(device.traffic.band).startsWith(String(network.band).slice(0, 3))) ?? false).length,
+      isOff = network.WifiEnable === false;
+    networks.push({
+      kind: 'value',
+      title: `${network.ssid}, ${band}`,
+      detail: isOff ? t('Turned off') : `${Boolean(network.Channel) ? t('Channel {0}', String(network.Channel)) : t('Automatic channel')} · ${onBand} ${onBand === 1 ? t('device') : t('devices')}`,
+      value: isOff ? t('Off') : t('On'),
+      leading: { kind: 'dot', tone: isOff ? 'idle' : 'good' },
+    });
+  }
+  appendGuestNetwork(wifi, networks);
+  return networks;
+}
+function wifiSignals(snapshot: Snapshot): Array<ListRow> {
   // Weakest first: the devices worth moving closer or switching band.
   const weak = snapshot.devices.filter(device => device.traffic?.band).sort((a, b) => (a.traffic?.signalDbm ?? 0) - (b.traffic?.signalDbm ?? 0)),
     signals = weak.map((device): ListRow => {
@@ -193,6 +193,15 @@ function wifiSection(snapshot: Snapshot, state: NetworkState): HTMLElement {
         ],
       };
     });
+  return signals;
+}
+
+function wifiSection(snapshot: Snapshot, state: NetworkState): HTMLElement {
+  const isCurrent = trafficCurrent(state),
+    meta = isCurrent ? t('Router, {0}', time(snapshot.routerTelemetry.observedAt)) : t('No current reading');
+  if (!isCurrent) return section({ title: 'Wi-Fi', meta }, [h('p', { className: 'note', text: t('No current Wi-Fi reading. Unlock the router session to see readings.') })]);
+  const networks = wifiNetworks(snapshot),
+    signals = wifiSignals(snapshot);
   const children: Array<Child> = [];
   if (networks.length) children.push(list(networks));
   children.push(signals.length ? h('div', { className: 'spaced' }, [list(signals)]) : h('p', { className: 'note', text: t('The router does not report any active Wi-Fi devices.') }));

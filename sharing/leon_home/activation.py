@@ -93,6 +93,7 @@ def activate(target, owner):
         atomic_json(marker, {'previous': str(previous), 'next': str(target)})
         try:
             select(target)
+            command('systemctl', 'restart', 'leon-router.service')
             command('systemctl', 'restart', 'leon-overview.service')
             command(
                 'systemd-run',
@@ -123,8 +124,10 @@ def activate(target, owner):
             )
             if not healthy(owner):
                 raise ReleaseError('activationFailed')
-        except Exception:
+        # Any activation failure must roll back before returning the categorized outcome.
+        except Exception:  # noqa: BLE001
             select(previous)
+            command('systemctl', 'restart', 'leon-router.service')
             command('systemctl', 'restart', 'leon-overview.service')
             if not healthy(owner):
                 raise ReleaseError('recoveryNeeded') from None
@@ -143,6 +146,7 @@ def recover(owner):
         raise ReleaseError('recoveryNeeded')
     with paused_inventory():
         select(previous)
+        command('systemctl', 'restart', 'leon-router.service')
         command('systemctl', 'restart', 'leon-overview.service')
         if not healthy(owner):
             raise ReleaseError('recoveryNeeded')

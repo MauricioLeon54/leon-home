@@ -104,7 +104,8 @@ class Worker:
                 self.apply()
         except ReleaseError as error:
             self.failure(error.code)
-        except Exception:
+        # Root worker boundary categorizes unexpected failures without exposing private details.
+        except Exception:  # noqa: BLE001
             # No paths, raw payloads, logins or exception details cross this root boundary.
             self.failure('recoveryNeeded')
         finally:

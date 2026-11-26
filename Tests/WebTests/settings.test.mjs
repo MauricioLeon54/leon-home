@@ -123,7 +123,8 @@ for (const browserType of [chromium, webkit]) {
       await app.page.goto('https://leon.test/settings/raspberry/lights');
       await app.page.getByText('Hardware controls are not installed on this Pi. Readings still work.').waitFor();
       for (const button of await app.page.locator('.segment').all()) assert.equal(await button.isDisabled(), true);
-      assert.equal(await app.page.getByRole('switch', { name: 'Ethernet port lights' }).isDisabled(), true);
+      // No reading: announced as a disabled mixed checkbox (ARIA switches have only on/off).
+      assert.equal(await app.page.getByRole('checkbox', { name: 'Ethernet port lights' }).isDisabled(), true);
       assert.deepEqual(app.errors, []);
     } finally {
       await app.close();

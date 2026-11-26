@@ -73,7 +73,7 @@ export function bindDisclosures(root: Document | HTMLElement = document): void {
     if (!(event.target instanceof Element)) return;
     const head = event.target.closest('.t-acc-head'),
       item = head?.parentElement;
-    if (!head || !item?.classList.contains('t-acc')) return;
+    if (!head || item?.classList.contains('t-acc') !== true) return;
     setDisclosure(item, item.getAttribute('data-open') !== 'true');
   });
 }

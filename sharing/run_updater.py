@@ -8,7 +8,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from leon_home.worker import SOCKET, serve  # noqa: E402
+from leon_home.worker import SOCKET, serve
 
 if __name__ == '__main__':
     if sys.argv[1:] == ['--check']:

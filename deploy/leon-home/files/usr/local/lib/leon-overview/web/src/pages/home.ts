@@ -32,7 +32,7 @@ export function renderHome(context: RouteContext): PageView {
     const active = document.activeElement,
       focusKey = active instanceof HTMLElement && content.contains(active) ? active.dataset.focusKey : undefined;
     content.replaceChildren(...children);
-    if (focusKey) content.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+    if (focusKey !== undefined && focusKey !== '') content.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
   function build(): void {
     if (!state.view) return;
@@ -42,7 +42,7 @@ export function renderHome(context: RouteContext): PageView {
         pihole: { isBusy: state.isPiHoleBusy, onPause: seconds => void pauseBlocking(seconds), onResume: () => void resumeBlocking() },
         network: {
           isExpanded: state.isDevicesExpanded,
-          onToggle: () => {
+          onToggle() {
             state.isDevicesExpanded = !state.isDevicesExpanded;
             build();
           },

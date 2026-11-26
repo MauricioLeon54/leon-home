@@ -1,4 +1,4 @@
-import { readJson } from '../../api.js';
+import { readGetJson, ReadStatusError } from '../../api.js';
 import { type FilesView, parseFiles } from '../../contracts/storage.js';
 import { h } from '../../core/dom.js';
 import type { PageView, RouteContext } from '../../core/router.js';
@@ -9,7 +9,6 @@ import { section } from '../../ui/section.js';
 import { skeleton } from '../../ui/skeleton.js';
 
 const SEARCH_DEBOUNCE_MS = 300;
-const TIMEOUT_MS = 8000;
 const MAX_QUERY = 80;
 
 const GLYPHS = {
@@ -70,15 +69,12 @@ function filesUrl(path: string, query: string): string {
 
 /** 'unavailable' is the server's 404 answer for a missing folder or an unmounted drive. */
 async function loadFiles(path: string, query: string, signal: AbortSignal): Promise<FilesView | 'unavailable'> {
-  const response = await fetch(`/leon/v1/storage/files?${new URLSearchParams({ path, q: query })}`, {
-    cache: 'no-store',
-    credentials: 'same-origin',
-    redirect: 'error',
-    signal: AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)]),
-  });
-  if (response.status === 404) return 'unavailable';
-  if (!response.ok) throw new Error(`Files answered ${response.status}`);
-  return parseFiles(await readJson(response));
+  try {
+    return parseFiles(await readGetJson(`/leon/v1/storage/files?${new URLSearchParams({ path, q: query })}`, signal));
+  } catch (error: unknown) {
+    if (error instanceof ReadStatusError && error.status === 404) return 'unavailable';
+    throw error;
+  }
 }
 
 function entryRow(entry: FilesView['entries'][number]): ListRow {
@@ -95,9 +91,11 @@ function entryRow(entry: FilesView['entries'][number]): ListRow {
 
 export function renderFiles(context: RouteContext): PageView {
   const path = context.query.get('path') ?? '',
-    folderName = path.split('/').pop() || t('Drive');
+    lastSegment = path.split('/').pop() ?? '',
+    folderName = lastSegment === '' ? t('Drive') : lastSegment;
   let query = (context.query.get('q') ?? '').trim().slice(0, MAX_QUERY),
     pending: AbortController | null = null,
+    pendingKey = '',
     timer: ReturnType<typeof setTimeout> | undefined;
 
   function onSubmit(event: SubmitEvent): void {
@@ -137,9 +135,11 @@ export function renderFiles(context: RouteContext): PageView {
   }
 
   async function load(): Promise<void> {
+    if (document.hidden || (pending !== null && !pending.signal.aborted && pendingKey === cacheKey())) return;
     pending?.abort();
     const current = new AbortController();
     pending = current;
+    pendingKey = cacheKey();
     try {
       const view = await loadFiles(path, query, AbortSignal.any([context.signal, current.signal]));
       if (current.signal.aborted) return;
@@ -148,6 +148,8 @@ export function renderFiles(context: RouteContext): PageView {
     } catch {
       if (current.signal.aborted || context.signal.aborted) return;
       results.replaceChildren(emptyState({ title: t('LEÓN Home is not answering'), detail: t('Check that this phone is connected to Tailscale, then tap Refresh.') }));
+    } finally {
+      if (pending === current) pending = null;
     }
   }
   function unavailable(): Array<Node> {
@@ -165,6 +167,15 @@ export function renderFiles(context: RouteContext): PageView {
     clearTimeout(timer);
     timer = setTimeout(search, SEARCH_DEBOUNCE_MS);
   });
+  function onVisibility(): void {
+    if (document.hidden) {
+      clearTimeout(timer);
+      pending?.abort();
+    } else if (input.value.trim().slice(0, MAX_QUERY) !== query)
+      search(); // keep a query typed just before hiding
+    else void load();
+  }
+  document.addEventListener('visibilitychange', onVisibility);
   const cached = viewCache.get(cacheKey());
   if (cached) results.replaceChildren(...show(cached));
   void load();
@@ -172,6 +183,7 @@ export function renderFiles(context: RouteContext): PageView {
     element: h('div', { className: 'page' }, [form, results]),
     dispose() {
       clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibility);
       pending?.abort();
     },
   };

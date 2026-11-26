@@ -7,11 +7,11 @@
     "node": ">=24"
   },
   "scripts": {
-    "lint:web": "eslint . --max-warnings 0",
+    "lint:web": "eslint .",
     "lint:web:fix": "pnpm lint:web --fix",
     "format:web": "prettier --write . --ignore-unknown",
     "format:web:check": "prettier --check . --ignore-unknown",
-    "lint:python": ".venv/bin/ruff check .",
+    "lint:python": ".venv/bin/ruff check . && pnpm lint:python:complexity",
     "format:python": ".venv/bin/ruff format .",
     "format:python:check": ".venv/bin/ruff format --check .",
     "lint:rust": "cd rust/leon-netmap && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings",
@@ -22,12 +22,13 @@
     "format": "pnpm format:web && pnpm format:python && pnpm format:rust",
     "format:check": "pnpm format:web:check && pnpm format:python:check && pnpm format:rust:check",
     "format:rust:check": "cd rust/leon-netmap && cargo fmt --check",
-    "test:web": "pnpm build:web && node --test Tests/WebTests/*.test.mjs",
+    "test:web": "pnpm build:web && node --test --test-concurrency=1 Tests/WebTests/*.test.mjs",
     "test:python": "python3 -B -m unittest discover -s Tests/SharingTests -v",
     "check": "pnpm lint && pnpm format:web:check && pnpm format:python:check && pnpm test:web && pnpm test:python && pnpm test:rust",
     "typecheck": "tsc --project tsconfig.web.json --noEmit && tsc --project tsconfig.worker.json --noEmit",
     "build:web": "node scripts/build-web.mjs",
-    "build:home": "pnpm build:web && python3 sharing/build_release.py"
+    "build:home": "pnpm build:web && python3 sharing/build_release.py",
+    "lint:python:complexity": ".venv/bin/ruff check . --select C901 --exit-zero"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

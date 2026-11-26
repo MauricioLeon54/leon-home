@@ -42,13 +42,63 @@ export async function readJson(response: Response, maximumBytes = 1_048_576): Pr
   const result: unknown = JSON.parse(await readText(response, maximumBytes));
   return result;
 }
+interface PendingRead {
+  controller: AbortController;
+  result: Promise<string>;
+  readers: number;
+}
+const pendingReads = new Map<string, PendingRead>();
+
+async function fetchText(path: string, signal: AbortSignal): Promise<string> {
+  const response = await fetch(apiUrl(path), { cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal });
+  if (!response.ok) throw new ReadStatusError(response.status);
+  return readText(response);
+}
+export class ReadStatusError extends Error {
+  constructor(readonly status: number) {
+    super(`GET answered ${status}`);
+  }
+}
+/** Share only in-flight GETs, never stored readings/tokens. Each reader keeps its own parser and byte limit. */
+export async function readGetJson(path: string, signal?: AbortSignal, maximumBytes = 1_048_576): Promise<unknown> {
+  signal?.throwIfAborted();
+  const key = apiUrl(path);
+  let pending = pendingReads.get(key);
+  if (!pending) {
+    if (pendingReads.size >= 32) throw new Error('Too many pending reads');
+    const controller = new AbortController();
+    const result = fetchText(path, AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]));
+    pending = { controller, result, readers: 0 };
+    pendingReads.set(key, pending);
+  }
+  const current = pending;
+  current.readers++;
+  let onAbort: (() => void) | undefined;
+  try {
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(new DOMException('Read cancelled', 'AbortError'));
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+    const text = await Promise.race([current.result, cancelled]);
+    if (new TextEncoder().encode(text).byteLength > maximumBytes) throw new Error('Response exceeds limit');
+    const value: unknown = JSON.parse(text);
+    return value;
+  } finally {
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+    current.readers--;
+    if (current.readers === 0) {
+      current.controller.abort();
+      if (pendingReads.get(key) === current) pendingReads.delete(key);
+    }
+  }
+}
 /** The /api/v1/network aliases of the router and device actions; bodies and outcomes match the /network-map/* ones. */
 export interface NetworkActions {
   '/api/v1/network/name': { address: string; name: string };
   '/api/v1/network/pause': { address: string; paused: boolean };
   '/api/v1/network/schedule': { address: string; schedule: Schedule | null };
   '/api/v1/network/port': { port: number; enabled: boolean };
-  '/api/v1/network/unlock': { phrase: string; password?: string };
+  '/api/v1/network/unlock': { phrase: string } | { password: string };
   // Answers {status: 'sent'}: a magic packet cannot confirm the device woke; presence shows it later.
   '/api/v1/network/wake': { address: string };
 }
@@ -92,8 +142,7 @@ async function send(path: string, body: unknown, token: string): Promise<{ httpS
 /** A new action token, or null when the panel does not give one. */
 async function renewToken(): Promise<string | null> {
   try {
-    const response = await fetch(apiUrl('/api/v1/session'), { cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(8000) });
-    return response.ok ? string(record(await readJson(response, 8192)).actionToken, 200) : null;
+    return string(record(await readGetJson('/api/v1/session', undefined, 8192)).actionToken, 200);
   } catch {
     return null;
   }

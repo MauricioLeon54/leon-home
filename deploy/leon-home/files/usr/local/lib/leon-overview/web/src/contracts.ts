@@ -57,6 +57,8 @@ export interface Wifi {
 }
 export interface RouterTelemetry {
   status: 'current' | 'locked' | 'error' | 'stale' | 'unavailable';
+  unlockBy: 'phrase' | 'password';
+  isReconnecting: boolean; // this Pi opens the session by itself
   observedAt: number | null;
   ports: Array<Port> | null;
   controllablePorts: Array<number>;

@@ -90,8 +90,7 @@ class Router:
             or parts.path not in ('', '/')
             or parts.query
             or parts.fragment
-            or port is not None
-            and not 1 <= port <= 65535
+            or (port is not None and not 1 <= port <= 65535)
         ):
             raise ProbeError('invalidOrigin')
         self.origin = origin.rstrip('/')
@@ -106,7 +105,8 @@ class Router:
         if path not in (self.WRITES if data is not None else self.READS):
             raise ProbeError('unsupportedOperation')
         body = json.dumps({'csrf': self.csrf, 'data': data}).encode() if data is not None else None
-        request = urllib.request.Request(
+        # Validated HTTP(S) origin and fixed route allowlist; redirects and proxies disabled.
+        request = urllib.request.Request(  # noqa: S310
             self.origin + path,
             data=body,
             headers={
@@ -142,7 +142,8 @@ class Router:
             '/api/system/user_login_nonce', {'username': username, 'firstnonce': nonce}
         )
         if not isinstance(challenge, dict) or challenge.get('err') != 0:
-            raise ProbeError('authenticationRejected')
+            # Refused before any password proof was sent (busy, another login, lockout).
+            raise ProbeError('loginUnavailable')
         client, expected, server_key = proof(
             password,
             challenge.get('salt'),

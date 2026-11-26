@@ -122,7 +122,7 @@ export function renderStorage(context: RouteContext): PageView {
     parse: parseStorage,
     intervalMs: REFRESH_MS,
     observedAt: () => null,
-    build: view => {
+    build(view) {
       const automation: Array<ListRow> = context.session.features.automation
         ? [{ kind: 'navigation', title: t('Automation'), detail: t('n8n workflows and recent runs'), href: '/storage/automation' }]
         : [];

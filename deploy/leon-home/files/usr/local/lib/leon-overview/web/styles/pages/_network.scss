@@ -759,13 +759,14 @@ $ping-period: 2.8s;
 }
 .day-chips {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 14px;
 }
 .day-chip {
   appearance: none;
   flex: 1;
-  min-width: 0;
+  min-width: $tap;
   min-height: $tap;
   border: 1px solid color('line-strong');
   border-radius: 999px;

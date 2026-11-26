@@ -5,7 +5,21 @@ line-length = 100
 extend-exclude = [".build", "dist", ".swiftpm", ".codegraph", ".code-review-graph", "node_modules", "private"]
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+select = [
+  "E4", "E7", "E9", "F", "I", "B", "C4", "SIM", "PIE", "RET", "PERF", "UP", "RUF",
+  "S102", "S108", "S301", "S307", "S310", "S602", "S604", "S605", "S607",
+  "BLE", "TRY002", "TRY400",
+  # TRY300 only moves guarded returns into else blocks; it adds no useful separation here.
+]
+# Context-manager rewrites obscure intentional best-effort boundaries and descriptor ownership.
+# Class-level protocol allowlists are inherited constants, not per-instance mutable state.
+# Tiny bounded I/O loops need local failure recovery, not exception-free micro-optimizations.
+ignore = ["SIM105", "SIM115", "RUF012", "PERF203"]
+
+# Complexity is advisory: `pnpm lint:python:complexity` reports offenders during Python lint.
+# Ruff has no warning severity; keeping C901 out of the blocking selection preserves this report.
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 # Tests and isolated Linux entrypoints explicitly load reviewed sibling modules after sys.path setup.

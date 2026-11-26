@@ -29,7 +29,13 @@ function statusRow(snapshot: Snapshot, state: NetworkState): HTMLElement {
   return h('div', { className: 'net-status', attrs: { 'aria-label': t('Reading status') } }, [
     chip(
       scan ? 'good' : 'warn',
-      state.hasFailed ? t('Offline · previous readings') : scan ? t('Scan {0}', time(snapshot.observedAt)) : snapshot.observedAt ? t('Earlier scan {0}', time(snapshot.observedAt)) : t('No scan yet')
+      state.hasFailed
+        ? t('Offline · previous readings')
+        : scan
+          ? t('Scan {0}', time(snapshot.observedAt))
+          : Boolean(snapshot.observedAt)
+            ? t('Earlier scan {0}', time(snapshot.observedAt))
+            : t('No scan yet')
     ),
     chip(isLive ? 'good' : 'warn', isLive ? t('Router live') : status === 'locked' ? t('Router locked') : status === 'error' ? t('Session ended') : t('No router reading')),
   ]);
@@ -41,11 +47,13 @@ export function renderNetwork(context: RouteContext): PageView {
     requestedPort = Number(context.query.get('port')),
     memory = createMemory(Number.isInteger(requestedPort) && requestedPort >= 1 && requestedPort <= 8 ? requestedPort : null);
   let view: View = VIEWS.find(item => item === requested) ?? (memory.selectedPort !== null ? 'ports' : 'map');
+  let canReuse = false;
   return livePage<Snapshot>({
     context,
     path: '/api/v1/network',
     parse: parseSnapshot,
     intervalMs: REFRESH_MS,
+    reuseReadOnlyDOM: () => canReuse && view !== 'ports',
     observedAt: snapshot => snapshot.observedAt,
     build(snapshot, flags, controls) {
       const state: NetworkState = { snapshot, hasFailed: flags.hasFailed },
@@ -60,26 +68,31 @@ export function renderNetwork(context: RouteContext): PageView {
             { value: 'ports', label: t('Ports') },
           ],
           value: view,
-          onChange: next => {
+          onChange(next) {
             view = next;
             history.replaceState(history.state, '', next === 'map' ? '/network' : `/network?view=${next}`);
             controls.repaint();
           },
         }),
         content: Array<Child> = view === 'map' ? mapView(snapshot, state, memory) : view === 'traffic' ? trafficView(snapshot, state, memory) : portsView({ snapshot, state, memory, token, controls });
-      for (const segment of segmented.element.querySelectorAll('button')) segment.dataset.focusKey = `network-view-${segment.textContent ?? ''}`;
+      for (const segment of segmented.element.querySelectorAll('button')) segment.dataset.focusKey = `network-view-${segment.textContent}`;
+      canReuse = routerStatus === 'current';
       memory.hasPainted = true;
       return [
         h('div', { className: 'net-controls' }, [segmented.element, statusRow(snapshot, state)]),
         isLocked
           ? unlockSection({
               state: memory.unlock,
+              unlockBy: snapshot.routerTelemetry.unlockBy,
+              isReconnecting: snapshot.routerTelemetry.isReconnecting,
               token,
               run: work => controls.run(work),
               explanation:
-                routerStatus === 'error'
-                  ? t('The router session stopped responding. LEÓN does not retry passwords. Unlock it again.')
-                  : t('The router session starts locked after the Pi or monitor restarts. The inventory map remains available.'),
+                snapshot.routerTelemetry.unlockBy === 'password'
+                  ? t('Type the router password once. LEÓN remembers it on this Pi and reconnects by itself.')
+                  : routerStatus === 'error'
+                    ? t('The router session stopped responding. LEÓN does not retry passwords. Unlock it again.')
+                    : t('The router session starts locked after the Pi or monitor restarts. The inventory map remains available.'),
             })
           : null,
         h('div', { className: 'net-view', dataset: { view } }, content.length ? content : []),

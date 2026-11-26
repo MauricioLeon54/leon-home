@@ -1,6 +1,7 @@
 import { parseSession } from './contracts/session.js';
 import { h } from './core/dom.js';
 import { getView, HttpError } from './core/http.js';
+import { poll } from './core/poll.js';
 import { startRouter } from './core/router.js';
 import { t } from './i18n/index.js';
 import { legacyTarget, ROUTES } from './routes.js';
@@ -27,13 +28,14 @@ if (root)
   getView('/api/v1/session', parseSession)
     .then(session => {
       startRouter(root, ROUTES, session, legacyTarget);
-      const renew = () => {
-        if (document.visibilityState !== 'visible') return;
-        getView('/api/v1/session', parseSession)
-          .then(renewed => (session.actionToken = renewed.actionToken))
-          .catch(() => {}); // the next action reports its own refusal if the token lapsed
-      };
-      setInterval(renew, TOKEN_RENEW_MS);
-      document.addEventListener('visibilitychange', renew);
+      poll({
+        intervalMs: TOKEN_RENEW_MS,
+        load: signal => getView('/api/v1/session', parseSession, signal),
+        onData(renewed) {
+          session.actionToken = renewed.actionToken;
+        },
+        onFailure() {}, // the next action reports its own refusal if the token lapsed
+        loadImmediately: false,
+      });
     })
     .catch((error: unknown) => root.replaceChildren(bootFailure(error)));

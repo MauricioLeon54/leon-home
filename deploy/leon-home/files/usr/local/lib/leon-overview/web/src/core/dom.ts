@@ -10,11 +10,11 @@ export interface Props {
 
 export function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, children: ReadonlyArray<Child> = []): HTMLElementTagNameMap[K] {
   const element = document.createElement(tag);
-  if (props.className) element.className = props.className;
+  if (props.className !== undefined && props.className !== '') element.className = props.className;
   if (props.text !== undefined) element.textContent = props.text;
   for (const [name, value] of Object.entries(props.attrs ?? {})) element.setAttribute(name, value);
   for (const [name, value] of Object.entries(props.dataset ?? {})) element.dataset[name] = value;
-  for (const [type, listener] of Object.entries(props.on ?? {})) if (listener) element.addEventListener(type, listener as EventListener);
+  if (props.on) for (const type of eventNames(props.on)) bindEvent(element, props.on, type);
   append(element, children);
   return element;
 }
@@ -45,3 +45,39 @@ export const ICONS = {
   back: 'M15 5l-7 7 7 7',
   chevron: 'M9 5l7 7-7 7',
 } as const;
+
+/** Reconcile read-only views. Callers rebuild interactive controls when local state changes. */
+export function patchChildren(parent: Element, children: ReadonlyArray<Child>): void {
+  const next = children.filter((child): child is Node | string => child !== null && child !== undefined && child !== false);
+  for (const [index, child] of next.entries()) {
+    const node = typeof child === 'string' ? document.createTextNode(child) : child;
+    const current = parent.childNodes[index];
+    if (!current) parent.append(node);
+    else if (current instanceof Element && node instanceof Element && sameViewNode(current, node)) {
+      patchAttributes(current, node);
+      patchChildren(current, [...node.childNodes]);
+    } else if (current.nodeType === Node.TEXT_NODE && node.nodeType === Node.TEXT_NODE) {
+      if (current.textContent !== node.textContent) current.textContent = node.textContent;
+    } else current.replaceWith(node);
+  }
+  while (parent.childNodes.length > next.length) parent.lastChild?.remove();
+}
+function patchAttributes(current: Element, next: Element): void {
+  for (const name of current.getAttributeNames()) if (!next.hasAttribute(name)) current.removeAttribute(name);
+  for (const name of next.getAttributeNames()) {
+    const value = next.getAttribute(name);
+    if (value !== null && current.getAttribute(name) !== value) current.setAttribute(name, value);
+  }
+}
+
+function eventNames(events: NonNullable<Props['on']>): Array<keyof HTMLElementEventMap> {
+  return Object.keys(events).filter((key): key is keyof HTMLElementEventMap => Object.hasOwn(events, key));
+}
+function bindEvent<K extends keyof HTMLElementEventMap>(element: HTMLElement, events: NonNullable<Props['on']>, type: K): void {
+  const listener = events[type];
+  if (listener) element.addEventListener(type, listener);
+}
+
+function sameViewNode(current: Element, next: Element): boolean {
+  return current.tagName === next.tagName && current.getAttribute('data-focus-key') === next.getAttribute('data-focus-key') && current.classList.item(0) === next.classList.item(0);
+}

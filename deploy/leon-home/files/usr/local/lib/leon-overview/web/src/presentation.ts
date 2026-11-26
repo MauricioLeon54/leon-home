@@ -24,14 +24,14 @@ export function feedbackFor<K extends string>(table: Record<K, Feedback>, status
 export function text<Tag extends keyof HTMLElementTagNameMap>(tag: Tag, value: string | number | null | undefined, className?: string): HTMLElementTagNameMap[Tag] {
   const element = document.createElement(tag);
   element.textContent = value === null || value === undefined ? '' : String(value);
-  if (className) element.className = className;
+  if (className !== undefined && className !== '') element.className = className;
   return element;
 }
 export function icon(kind: Connection | undefined, className?: string): SVGSVGElement {
   const svg = document.createElementNS(svgNS, 'svg'),
     path = document.createElementNS(svgNS, 'path');
   svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', className || 'kind');
+  svg.setAttribute('class', className === '' ? 'kind' : (className ?? 'kind'));
   svg.setAttribute('aria-hidden', 'true');
   path.setAttribute('d', kind && hasKey(KIND_ICONS, kind) ? KIND_ICONS[kind] : KIND_ICONS.unknown);
   svg.append(path);
@@ -45,7 +45,7 @@ export function date(value: number | null | undefined): string {
   if (moment.toDateString() === today.toDateString()) return t('Today ') + clock;
   today.setDate(today.getDate() - 1);
   if (moment.toDateString() === today.toDateString()) return t('Yesterday ') + clock;
-  return moment.toLocaleDateString(dateLocale, { month: 'short', day: 'numeric' }) + ', ' + clock;
+  return `${moment.toLocaleDateString(dateLocale, { month: 'short', day: 'numeric' })}, ${clock}`;
 }
 export function time(value: number | null | undefined): string {
   return typeof value === 'number' ? new Date(value * 1000).toLocaleTimeString(dateLocale, { hour: 'numeric', minute: '2-digit' }) : '—';
@@ -54,5 +54,5 @@ export function mbps(value: number | null | undefined): string {
   return typeof value === 'number' ? value.toLocaleString(dateLocale, { maximumFractionDigits: value < 10 ? 2 : 1 }) : '—';
 }
 export function speed(value: number | null | undefined): string {
-  return typeof value !== 'number' ? '—' : value >= 1000 ? (value / 1000).toLocaleString(dateLocale) + ' Gbps' : value + ' Mbps';
+  return typeof value !== 'number' ? '—' : value >= 1000 ? `${(value / 1000).toLocaleString(dateLocale)} Gbps` : `${value} Mbps`;
 }

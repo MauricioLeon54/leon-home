@@ -33,7 +33,8 @@ def verify(folder, public_key):
         raise ReleaseError('invalidRelease')
     try:
         result = subprocess.run(
-            [
+            # Fixed administrator tool from the installation PATH; no request selects the executable.
+            [  # noqa: S607
                 'openssl',
                 'pkeyutl',
                 '-verify',
@@ -112,7 +113,7 @@ def unpack(folder, destination, public_key):
             key=lambda path: len(path.parts),
             reverse=True,
         )
-        for path in directories + [destination, destination.parent]:
+        for path in [*directories, destination, destination.parent]:
             path.chmod(0o755)
             descriptor = os.open(path, os.O_RDONLY)
             try:

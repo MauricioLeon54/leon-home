@@ -47,7 +47,8 @@ class Redirects(urllib.request.HTTPRedirectHandler):
 def fetch(url, target, maximum):
     allowed(url)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), Redirects())
-    request = urllib.request.Request(
+    # allowed() enforces HTTPS and the release host allowlist, including redirects.
+    request = urllib.request.Request(  # noqa: S310
         url, headers={'User-Agent': 'LEON-Home-Updater/1', 'Accept': 'application/vnd.github+json'}
     )
     start = time.monotonic()

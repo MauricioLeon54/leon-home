@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from leon_home.contracts import ReleaseError, Site, read_json  # noqa: E402
-from leon_home.install import install, maintain, preflight, support_key, verified_bundle  # noqa: E402
+from leon_home.contracts import ReleaseError, Site, read_json
+from leon_home.install import install, maintain, preflight, support_key, verified_bundle
 
 MESSAGES = {
     'existingInstallation': 'This Pi already has an installation. To resume an interrupted new setup, use the exact same bundle with --resume.',
@@ -95,7 +95,7 @@ def main():
         )
         if not options.apply:
             print('Checks complete. No changes were made. Add --apply when ready to install.')
-            return
+            return None
         if os.geteuid() != 0:
             raise ReleaseError('rootRequired')
         password = getpass.getpass('Pi-hole APPLICATION password (not displayed): ')

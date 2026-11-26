@@ -1,5 +1,5 @@
 // App frame: safe areas, a translucent navbar that condenses, a translucent tab bar and the
-// push / pop / tab View Transitions. Dark only.
+// push / pop / tab View Transitions. The app keeps its dark palette in either system theme.
 @use '../tokens' as *;
 @use '../mixins' as *;
 
@@ -302,5 +302,25 @@ html[data-navigation='tab'] {
   ::view-transition-old(*),
   ::view-transition-new(*) {
     animation: none !important;
+  }
+}
+
+// Covers short labels, icon-only controls and disclosure summaries at narrow phone widths.
+button,
+summary,
+input:not([type='hidden']),
+select {
+  min-height: $tap;
+}
+button {
+  min-width: $tap;
+}
+@include reduced-motion {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
   }
 }

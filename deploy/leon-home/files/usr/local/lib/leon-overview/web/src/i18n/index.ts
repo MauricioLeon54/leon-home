@@ -19,6 +19,7 @@ function detect(): Language {
   } catch {
     /* storage is unavailable (private window or tests): use the device's language */
   }
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Non-browser test environments may omit navigator or its language.
   return globalThis.navigator?.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
 }
 // Read once, before any page module builds its texts; changing it reloads the app.
@@ -68,11 +69,15 @@ const PATTERNS = SERVER_TEMPLATES.map(key => ({ key, pattern: new RegExp(`^${key
 export function serverText(text: string): string {
   if (language === 'en') return text;
   const catalog = CATALOGS[language];
-  if (Object.hasOwn(catalog, text)) return catalog[text as MessageKey];
+  if (isMessageKey(text)) return catalog[text];
   // Whole sentences first: some of them contain the separator.
   for (const { key, pattern } of PATTERNS) {
     const found = text.includes(' · ') && !key.includes('. ') ? null : pattern.exec(text);
     if (found) return fill(catalog[key], found.slice(1).map(serverText));
   }
   return text.includes(' · ') ? text.split(' · ').map(serverText).join(' · ') : text;
+}
+
+function isMessageKey(value: string): value is MessageKey {
+  return Object.hasOwn(es, value);
 }

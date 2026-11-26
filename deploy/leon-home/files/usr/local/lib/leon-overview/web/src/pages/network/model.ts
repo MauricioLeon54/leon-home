@@ -36,7 +36,7 @@ export async function sendNetworkAction<K extends keyof NetworkActions>(path: K,
     const reply = await postNetwork(path, body, token);
     if (reply.httpStatus === 403) return 'forbidden';
     if (reply.httpStatus === 503) return 'unavailable';
-    return options.requireOk && !reply.ok ? 'invalid' : reply.outcome;
+    return (options.requireOk ?? false) && !reply.ok ? 'invalid' : reply.outcome;
   } catch {
     return 'network';
   }
@@ -59,12 +59,12 @@ export interface NetworkMemory {
   unlock: UnlockState;
 }
 export function createMemory(selectedPort: number | null): NetworkMemory {
-  return { query: '', hasPainted: false, openNotes: new Set(), selectedPort, portOutcome: null, isActing: false, unlock: { isConnecting: false, feedback: null } };
+  return { query: '', hasPainted: false, openNotes: new Set(), selectedPort, portOutcome: null, isActing: false, unlock: { feedback: null, isOpen: false } };
 }
 
 /** A collapsible method note whose open state outlives refreshes. */
 export function methodNote(memory: NetworkMemory, id: string, title: string, text: string): HTMLElement {
-  const details = h('details', { className: 'method' }, [h('summary', { text: title }), h('p', { className: 'note', text })]);
+  const details = h('details', { className: 'method', dataset: { focusKey: `method-${id}` } }, [h('summary', { text: title }), h('p', { className: 'note', text })]);
   details.open = memory.openNotes.has(id);
   details.addEventListener('toggle', () => (details.open ? memory.openNotes.add(id) : memory.openNotes.delete(id)));
   return details;

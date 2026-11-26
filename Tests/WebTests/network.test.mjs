@@ -133,6 +133,22 @@ async function start(browserType, { data = () => snapshot(), answer = () => ({ s
   page.on('console', message => {
     if (message.type() === 'error' && !message.text().includes('Failed to load resource')) errors.push(message.text());
   });
+  const requests = [];
+  page.on('request', request => requests.push(new URL(request.url()).pathname));
+  await page.addInitScript(() => {
+    globalThis.pollTicks = 0;
+    const interval = globalThis.setInterval.bind(globalThis);
+    globalThis.setInterval = (callback, delay, ...args) =>
+      interval(() => {
+        globalThis.pollTicks++;
+        callback(...args);
+      }, delay);
+    globalThis.setHidden = hidden => {
+      Object.defineProperty(globalThis.document, 'hidden', { configurable: true, value: hidden });
+      Object.defineProperty(globalThis.document, 'visibilityState', { configurable: true, value: hidden ? 'hidden' : 'visible' });
+      globalThis.document.dispatchEvent(new Event('visibilitychange'));
+    };
+  });
   await page.clock.install();
   await page.route('https://leon.test/**', async route => {
     const request = route.request(),
@@ -158,6 +174,7 @@ async function start(browserType, { data = () => snapshot(), answer = () => ({ s
   });
   return {
     page,
+    requests,
     errors,
     posts,
     state,
@@ -169,103 +186,95 @@ async function start(browserType, { data = () => snapshot(), answer = () => ({ s
 }
 const url = page => new URL(page.url());
 
+function appTest(browserType, name, verify, options) {
+  test(name, async () => {
+    const app = await start(browserType, options);
+    try {
+      await verify(app);
+    } finally {
+      await app.close();
+    }
+  });
+}
+
 for (const browserType of [chromium, webkit]) {
-  test(`${browserType.name()} map renders device nodes safely and filters by search`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/network');
-      await app.page.locator('a.node').first().waitFor();
-      assert.equal(await app.page.locator('.tiles a.node').count(), 2);
-      assert.equal(await app.page.locator('.net-view img').count(), 0);
-      assert.equal(await app.page.locator('.tiles a.node', { hasText: '<img src=x onerror=alert(1)>' }).count(), 1);
-      assert.equal(await app.page.locator('.nav-back').isHidden(), true);
-      await app.page.getByLabel('Find a device').fill('nothing here');
-      assert.equal(await app.page.locator('.tiles a.node:visible').count(), 0);
-      await app.page.getByText('No device matches “nothing here”.').waitFor();
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} map renders device nodes safely and filters by search`, async app => {
+    await app.page.goto('https://leon.test/network');
+    await app.page.locator('a.node').first().waitFor();
+    assert.equal(await app.page.locator('.tiles a.node').count(), 2);
+    assert.equal(await app.page.locator('.net-view img').count(), 0);
+    assert.equal(await app.page.locator('.tiles a.node', { hasText: '<img src=x onerror=alert(1)>' }).count(), 1);
+    assert.equal(await app.page.locator('.nav-back').isHidden(), true);
+    await app.page.getByLabel('Find a device').fill('nothing here');
+    assert.equal(await app.page.locator('.tiles a.node:visible').count(), 0);
+    await app.page.getByText('No device matches “nothing here”.').waitFor();
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} segmented control switches views and updates the URL`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/network');
-      await app.page.getByRole('radio', { name: 'Traffic' }).click();
-      await app.page.getByText('Right now').waitFor();
-      assert.equal(url(app.page).search, '?view=traffic');
-      assert.equal(await app.page.locator('.traffic-row').count(), 2);
-      const modem = app.page.locator('.group', { has: app.page.getByRole('heading', { name: 'Modem', exact: true }) });
-      assert.equal(await modem.locator('.reading', { hasText: 'Response' }).locator('.reading-value').textContent(), '1.4 ms');
-      const fiber = app.page.locator('.group', { has: app.page.getByRole('heading', { name: 'Fiber', exact: true }) });
-      assert.equal(await fiber.locator('.reading', { hasText: 'Fiber signal' }).locator('.reading-value').textContent(), '-21.2 dBm');
-      assert.equal(await fiber.locator('.row', { hasText: 'Modem port 1' }).locator('.row-value').textContent(), '2.5 Gbps');
-      assert.equal(await fiber.getByText('The fiber signal is normal.').count(), 1);
-      const speed = app.page.locator('.group', { hasText: 'Speed test' });
-      assert.equal(await speed.locator('.reading', { hasText: 'Download' }).locator('.reading-value').textContent(), '283 Mbps');
-      assert.equal(await speed.locator('.reading', { hasText: 'Upload' }).locator('.reading-value').textContent(), '—');
-      assert.equal(await speed.getByText('Part of the last test could not finish.').count(), 1);
-      await app.page.getByRole('radio', { name: 'Ports' }).click();
-      await app.page.getByText('Ethernet ports').waitFor();
-      assert.equal(url(app.page).search, '?view=ports');
-      await app.page.getByRole('radio', { name: 'Map' }).click();
-      await app.page.locator('a.node').first().waitFor();
-      assert.equal(url(app.page).pathname + url(app.page).search, '/network');
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} segmented control switches views and updates the URL`, async app => {
+    await app.page.goto('https://leon.test/network');
+    await app.page.getByRole('radio', { name: 'Traffic' }).click();
+    await app.page.getByText('Right now').waitFor();
+    assert.equal(url(app.page).search, '?view=traffic');
+    assert.equal(await app.page.locator('.traffic-row').count(), 2);
+    const modem = app.page.locator('.group', { has: app.page.getByRole('heading', { name: 'Modem', exact: true }) });
+    assert.equal(await modem.locator('.reading', { hasText: 'Response' }).locator('.reading-value').textContent(), '1.4 ms');
+    const fiber = app.page.locator('.group', { has: app.page.getByRole('heading', { name: 'Fiber', exact: true }) });
+    assert.equal(await fiber.locator('.reading', { hasText: 'Fiber signal' }).locator('.reading-value').textContent(), '-21.2 dBm');
+    assert.equal(await fiber.locator('.row', { hasText: 'Modem port 1' }).locator('.row-value').textContent(), '2.5 Gbps');
+    assert.equal(await fiber.getByText('The fiber signal is normal.').count(), 1);
+    const speed = app.page.locator('.group', { hasText: 'Speed test' });
+    assert.equal(await speed.locator('.reading', { hasText: 'Download' }).locator('.reading-value').textContent(), '283 Mbps');
+    assert.equal(await speed.locator('.reading', { hasText: 'Upload' }).locator('.reading-value').textContent(), '—');
+    assert.equal(await speed.getByText('Part of the last test could not finish.').count(), 1);
+    await app.page.getByRole('radio', { name: 'Ports' }).click();
+    await app.page.getByText('Ethernet ports').waitFor();
+    assert.equal(url(app.page).search, '?view=ports');
+    await app.page.getByRole('radio', { name: 'Map' }).click();
+    await app.page.locator('a.node').first().waitFor();
+    assert.equal(url(app.page).pathname + url(app.page).search, '/network');
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} legacy network-map#ports lands on Ports`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/network-map#ports');
-      await app.page.getByText('Ethernet ports').waitFor();
-      assert.equal(url(app.page).pathname + url(app.page).search, '/network?view=ports');
-      assert.equal(await app.page.getByRole('radio', { name: 'Ports' }).getAttribute('aria-checked'), 'true');
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} legacy network-map#ports lands on Ports`, async app => {
+    await app.page.goto('https://leon.test/network-map#ports');
+    await app.page.getByText('Ethernet ports').waitFor();
+    assert.equal(url(app.page).pathname + url(app.page).search, '/network?view=ports');
+    assert.equal(await app.page.getByRole('radio', { name: 'Ports' }).getAttribute('aria-checked'), 'true');
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} a device opens its own page with a back button`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/network');
-      await app.page.locator('.tiles a.node', { hasText: 'Desk PC' }).click();
-      await app.page.getByText('Not seen in the latest scan.').waitFor();
-      assert.equal(url(app.page).pathname, '/network/device/192.168.1.30');
-      assert.equal(await app.page.locator('.large-title').textContent(), 'Desk PC');
-      assert.equal(await app.page.locator('.nav-back').textContent(), 'Network');
-      await app.page.locator('.nav-back').click();
-      await app.page.locator('.tiles a.node').first().waitFor();
-      assert.equal(url(app.page).pathname, '/network');
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} a device opens its own page with a back button`, async app => {
+    await app.page.goto('https://leon.test/network');
+    await app.page.locator('.tiles a.node', { hasText: 'Desk PC' }).click();
+    await app.page.getByText('Not seen in the latest scan.').waitFor();
+    assert.equal(url(app.page).pathname, '/network/device/192.168.1.30');
+    assert.equal(await app.page.locator('.large-title').textContent(), 'Desk PC');
+    assert.equal(await app.page.locator('.nav-back').textContent(), 'Network');
+    await app.page.locator('.nav-back').click();
+    await app.page.locator('.tiles a.node').first().waitFor();
+    assert.equal(url(app.page).pathname, '/network');
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} renaming a device posts the name with the token`, async () => {
-    const app = await start(browserType, { answer: () => ({ status: 'saved' }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} renaming a device posts the name with the token`,
+    async app => {
       await app.page.goto('https://leon.test/network/device/192.168.1.30');
       await app.page.getByLabel('Device name').fill('Office PC');
       await app.page.getByRole('button', { name: 'Rename' }).click();
       await app.page.getByText(/Saved\. The Pi-hole name updates/).waitFor();
       assert.deepEqual(app.posts, [{ path: '/leon/v1/network/name', token: 'token-fixture', body: { address: '192.168.1.30', name: 'Office PC' } }]);
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
+    },
+    { answer: () => ({ status: 'saved' }) }
+  );
 
-  test(`${browserType.name()} the pause switch reverts when the router rejects the change`, async () => {
-    const app = await start(browserType, { answer: () => ({ status: 'rejected' }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} the pause switch reverts when the router rejects the change`,
+    async app => {
       await app.page.goto('https://leon.test/network/device/192.168.1.20');
       const toggle = () => app.page.getByRole('switch', { name: 'Network access' });
       assert.equal(await toggle().getAttribute('aria-checked'), 'true');
@@ -275,14 +284,14 @@ for (const browserType of [chromium, webkit]) {
       assert.equal(await toggle().getAttribute('aria-checked'), 'true');
       assert.deepEqual(app.posts, [{ path: '/leon/v1/network/pause', token: 'token-fixture', body: { address: '192.168.1.20', paused: true } }]);
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
+    },
+    { answer: () => ({ status: 'rejected' }) }
+  );
 
-  test(`${browserType.name()} Wake appears only when the device can be woken and never claims it woke`, async () => {
-    const app = await start(browserType, { answer: () => ({ status: 'sent', message: 'Wake signal sent.' }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} Wake appears only when the device can be woken and never claims it woke`,
+    async app => {
       await app.page.goto('https://leon.test/network/device/192.168.1.30');
       await app.page.getByText('Desk PC').first().waitFor();
       assert.equal(await app.page.getByRole('button', { name: /^Wake/ }).count(), 0);
@@ -291,43 +300,32 @@ for (const browserType of [chromium, webkit]) {
       await app.page.locator('.toast.is-applied', { hasText: 'Wake signal sent.' }).waitFor();
       assert.deepEqual(app.posts, [{ path: '/leon/v1/network/wake', token: 'token-fixture', body: { address: '192.168.1.20' } }]);
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+    },
+    { answer: () => ({ status: 'sent', message: 'Wake signal sent.' }) }
+  );
+
+  appTest(browserType, `${browserType.name()} an unknown device shows an empty state with a way back`, async app => {
+    await app.page.goto('https://leon.test/network/device/192.168.1.99');
+    await app.page.getByText('This device is not in the latest scan').waitFor();
+    await app.page.getByRole('link', { name: /Back to Network/ }).click();
+    await app.page.locator('.tiles a.node').first().waitFor();
+    assert.equal(url(app.page).pathname, '/network');
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} an unknown device shows an empty state with a way back`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/network/device/192.168.1.99');
-      await app.page.getByText('This device is not in the latest scan').waitFor();
-      await app.page.getByRole('link', { name: /Back to Network/ }).click();
-      await app.page.locator('.tiles a.node').first().waitFor();
-      assert.equal(url(app.page).pathname, '/network');
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
-
-  test(`${browserType.name()} port switches confirm before disabling and keep the WAN protected`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/network?view=ports');
-      await app.page.getByRole('switch', { name: 'Port 1 enabled' }).waitFor();
-      assert.equal(await app.page.getByRole('switch', { name: 'WAN enabled' }).isDisabled(), true);
-      await app.page.getByRole('switch', { name: 'Port 1 enabled' }).click();
-      await app.page.locator('.sheet').getByRole('button', { name: 'Cancel' }).click();
-      await app.page.locator('.sheet').waitFor({ state: 'detached' });
-      assert.deepEqual(app.posts, []);
-      await app.page.getByRole('switch', { name: 'Port 1 enabled' }).click();
-      await app.page.locator('.sheet').getByRole('button', { name: 'Disable' }).click();
-      await app.page.locator('.sheet').waitFor({ state: 'detached' });
-      assert.deepEqual(app.posts, [{ path: '/leon/v1/network/port', token: 'token-fixture', body: { port: 1, enabled: false } }]);
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} port switches confirm before disabling and keep the WAN protected`, async app => {
+    await app.page.goto('https://leon.test/network?view=ports');
+    await app.page.getByRole('switch', { name: 'Port 1 enabled' }).waitFor();
+    assert.equal(await app.page.getByRole('switch', { name: 'WAN enabled' }).isDisabled(), true);
+    await app.page.getByRole('switch', { name: 'Port 1 enabled' }).click();
+    await app.page.locator('.sheet').getByRole('button', { name: 'Cancel' }).click();
+    await app.page.locator('.sheet').waitFor({ state: 'detached' });
+    assert.deepEqual(app.posts, []);
+    await app.page.getByRole('switch', { name: 'Port 1 enabled' }).click();
+    await app.page.locator('.sheet').getByRole('button', { name: 'Disable' }).click();
+    await app.page.locator('.sheet').waitFor({ state: 'detached' });
+    assert.deepEqual(app.posts, [{ path: '/leon/v1/network/port', token: 'token-fixture', body: { port: 1, enabled: false } }]);
+    assert.deepEqual(app.errors, []);
   });
 
   test(`${browserType.name()} an action refused after the panel restarted is retried once with a new token`, async () => {
@@ -350,9 +348,10 @@ for (const browserType of [chromium, webkit]) {
     }
   });
 
-  test(`${browserType.name()} a locked router shows the unlock form and clears the passphrase after one attempt`, async () => {
-    const app = await start(browserType, { data: () => snapshot({ routerTelemetry: { ...snapshot().routerTelemetry, status: 'locked', ports: null } }), answer: () => ({ status: 'unlockFailed' }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} a locked router shows the unlock form and clears the passphrase after one attempt`,
+    async app => {
       await app.page.goto('https://leon.test/network');
       await app.page.getByText('Router readings are locked').waitFor();
       assert.equal(await app.page.getByText('Router locked').count(), 1);
@@ -362,14 +361,48 @@ for (const browserType of [chromium, webkit]) {
       assert.deepEqual(app.posts, [{ path: '/leon/v1/network/unlock', token: 'token-fixture', body: { phrase: 'correct horse battery' } }]);
       assert.equal(await app.page.getByLabel('LEÓN vault passphrase').inputValue(), '');
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
+    },
+    { data: () => snapshot({ routerTelemetry: { ...snapshot().routerTelemetry, status: 'locked', ports: null } }), answer: () => ({ status: 'unlockFailed' }) }
+  );
 
-  test(`${browserType.name()} failed refreshes keep the map and show the stale banner after 90 s`, async () => {
-    const app = await start(browserType, { data: count => (count === 1 ? snapshot() : null) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} an edition without phrases asks once for the router password`,
+    async app => {
+      await app.page.goto('https://leon.test/network');
+      await app.page.getByText('Connect your router').waitFor();
+      assert.equal(await app.page.locator('.unlock input[type=password]').count(), 1);
+      await app.page.getByLabel('Router administrator password').fill('router-secret');
+      await app.page.getByRole('button', { name: 'Connect router' }).click();
+      await app.page.getByText(/The router did not accept that password/).waitFor();
+      assert.deepEqual(app.posts, [{ path: '/leon/v1/network/unlock', token: 'token-fixture', body: { password: 'router-secret' } }]);
+      assert.equal(await app.page.getByLabel('Router administrator password').inputValue(), '');
+      assert.deepEqual(app.errors, []);
+    },
+    {
+      data: () => snapshot({ routerTelemetry: { ...snapshot().routerTelemetry, status: 'locked', unlockBy: 'password', ports: null } }),
+      answer: () => ({ status: 'unlockFailed' }),
+    }
+  );
+
+  appTest(
+    browserType,
+    `${browserType.name()} a Pi that reconnects by itself asks for nothing`,
+    async app => {
+      await app.page.goto('https://leon.test/network');
+      await app.page.getByText('You do not need to do anything.').waitFor();
+      assert.equal(await app.page.getByLabel('Router administrator password').isVisible(), false);
+      await app.page.getByText('The router or its password changed').click();
+      assert.equal(await app.page.getByLabel('Router administrator password').isVisible(), true);
+      assert.deepEqual(app.errors, []);
+    },
+    { data: () => snapshot({ routerTelemetry: { ...snapshot().routerTelemetry, status: 'locked', unlockBy: 'password', isReconnecting: true, ports: null } }) }
+  );
+
+  appTest(
+    browserType,
+    `${browserType.name()} failed refreshes keep the map and show the stale banner after 90 s`,
+    async app => {
       await app.page.goto('https://leon.test/network');
       await app.page.locator('a.node').first().waitFor();
       await app.page.clock.runFor(15_001);
@@ -379,20 +412,64 @@ for (const browserType of [chromium, webkit]) {
       await app.page.locator('.banner:not([hidden])').waitFor();
       assert.equal(await app.page.locator('.tiles a.node').count(), 2);
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
+    },
+    { data: count => (count === 1 ? snapshot() : null) }
+  );
 
-  test(`${browserType.name()} malformed network JSON shows an error state`, async () => {
-    const app = await start(browserType, { data: () => ({ schemaVersion: 2 }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} malformed network JSON shows an error state`,
+    async app => {
       await app.page.goto('https://leon.test/network');
       await app.page.getByText('LEÓN Home is not answering').waitFor();
       assert.equal(await app.page.locator('.tabbar').isVisible(), true);
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+    },
+    { data: () => ({ schemaVersion: 2 }) }
+  );
+}
+
+for (const browserType of [chromium, webkit]) {
+  appTest(browserType, `${browserType.name()} measures network requests and hidden work`, async app => {
+    await app.page.goto('https://leon.test/network');
+    await app.page.locator('a.node').first().waitFor();
+    const initial = [...app.requests];
+    await app.page.clock.runFor(15001);
+    await app.page.locator('a.node').first().waitFor();
+    const refresh = app.requests.slice(initial.length);
+    await app.page.evaluate(() => globalThis.setHidden(true));
+    const before = app.requests.length;
+    const ticks = await app.page.evaluate(() => globalThis.pollTicks);
+    await app.page.clock.runFor(120_001);
+    const hiddenTicks = (await app.page.evaluate(() => globalThis.pollTicks)) - ticks;
+    console.log(JSON.stringify({ measurement: 'network', browser: browserType.name(), initial, refresh, hiddenRequests: app.requests.length - before, hiddenTicks }));
+    assert.equal(app.requests.length - before, 0);
+    assert.equal(hiddenTicks, 0);
+    const resumed = app.page.waitForResponse(response => response.url().endsWith('/leon/v1/network'));
+    await app.page.evaluate(() => globalThis.setHidden(false));
+    await resumed;
+    assert.deepEqual(app.errors, []);
   });
+}
+
+for (const browserType of [chromium, webkit]) {
+  for (const view of ['map', 'traffic']) {
+    test(`${browserType.name()} ${view} refresh retains attached device nodes and keyboard focus`, async () => {
+      const app = await start(browserType);
+      try {
+        await app.page.goto(`https://leon.test/network?view=${view}`);
+        const selector = view === 'map' ? '.tiles a.node' : '.traffic-row';
+        await app.page.locator(selector).first().waitFor();
+        await app.page.locator(selector).first().focus();
+        const before = await app.page.locator(selector).first().elementHandle();
+        const refreshed = app.page.waitForResponse(response => response.url().endsWith('/leon/v1/network'));
+        await app.page.clock.runFor(15_001);
+        await refreshed;
+        assert.equal(await before.evaluate(element => element.isConnected && element === globalThis.document.activeElement), true);
+        assert.deepEqual(app.errors, []);
+      } finally {
+        await app.close();
+      }
+    });
+  }
 }

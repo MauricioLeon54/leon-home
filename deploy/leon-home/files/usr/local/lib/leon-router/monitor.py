@@ -36,16 +36,19 @@ MODEM_REFUSED = Path('/var/lib/leon-router/modem-refused')
 # Ciphertext copy of the owner's age vault (owner choice 2026-11-16); decrypted only in memory.
 # The unit may move it; the independent edition keeps it in the monitor's own state directory.
 VAULT = Path(os.environ.get('ROUTER_VAULT', '/etc/leon-router/network-devices.age'))
-# '1' lets the phone create the vault once (router password + new phrase); never replaces one.
+# '1' (independent edition): the phone connects with the router password alone, no phrase to remember.
 PHONE_SETUP = os.environ.get('ROUTER_PHONE_SETUP') == '1'
-MIN_SETUP_PHRASE_BYTES = 12
-# Owner opt-in 2026-11-25 (`provision.sh router-auto-unlock on`): while this key exists, the device
-# entries of the last phone unlock are kept encrypted to it, never the vault phrase.
-AUTO_KEY = Path('/etc/leon-router/auto-unlock.key')
+# While this key exists, the device entries of the last phone unlock are kept encrypted to it, never
+# a vault phrase. Personal Pi: owner opt-in 2026-11-25 (`provision.sh router-auto-unlock on`).
+# Independent edition: created when the owner connects the router in the panel.
+AUTO_KEY = Path(
+    '/var/lib/leon-router/auto-unlock.key' if PHONE_SETUP else '/etc/leon-router/auto-unlock.key'
+)
 AUTO_ENTRIES = Path('/var/lib/leon-router/auto-unlock.age')
 AUTO_RETRY_SECONDS = (60, 900)  # first and longest wait after a failure that tested no password
 MODEM_INTERVAL_SECONDS = 6 * 3600
 AGE = '/usr/bin/age'
+AGE_KEYGEN = '/usr/bin/age-keygen'
 VAULT_TIMEOUT_SECONDS = 30  # scrypt (log2 N = 18) takes a few seconds on a Pi 4; bounds a stuck age
 UNLOCK_SOCKET = '/run/leon-router/unlock.sock'
 CONTROL_SOCKET = '/run/leon-router/control.sock'
@@ -179,7 +182,7 @@ def normalize(rows):
         except (ValueError, TypeError):
             continue
 
-        def rate(key):
+        def rate(key, row=row):
             value = row.get(key)
             # Match the inspected vendor UI: raw * 8 Kbps, / 1024 for its Mbps label.
             return value * 8 / 1024 if type(value) is int and 0 <= value <= 12800000 else None
@@ -439,8 +442,11 @@ def read_state(router, history):
     }
 
 
-def save(state):
-    raw = json.dumps({'schemaVersion': 1, **state}, allow_nan=False).encode()
+def save(state, auto=None):
+    telemetry = {**state, **access(auto or AutoUnlock())}
+    if state.get('status') == 'current':
+        telemetry['isReconnecting'] = False
+    raw = json.dumps({'schemaVersion': 1, **telemetry}, allow_nan=False).encode()
     if len(raw) > 262144:
         raise ProbeError('stateTooLarge')
     temporary = STATE.with_suffix('.new')
@@ -537,24 +543,6 @@ def decrypt_vault(phrase, path=VAULT):
     return json.loads(raw)
 
 
-def encrypt_vault(phrase, document, path=VAULT):
-    """Write a new vault once with a passphrase recipient; an existing vault is never replaced."""
-    path = Path(path)
-    temporary = path.with_name(path.name + '.new')
-    temporary.unlink(missing_ok=True)
-    try:
-        run_age(
-            ['--encrypt', '--passphrase', '--output', str(temporary)],
-            phrase,
-            2,
-            json.dumps(document).encode(),
-        )
-        os.chmod(temporary, 0o600)
-        os.link(temporary, path)  # fails if a vault appeared meanwhile
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def default_gateway(route_table='/proc/net/route'):
     """The IPv4 default gateway; Router() then refuses anything outside private ranges."""
     with open(route_table, encoding='ascii') as handle:
@@ -565,23 +553,45 @@ def default_gateway(route_table='/proc/net/route'):
     raise ProbeError('noGateway')
 
 
-def connect_router(password, phrase):
-    """Phone setup: log in to the default gateway first, then keep that entry in a new vault."""
+def create_auto_key():
+    """The key that lets this Pi keep the router entry; age-keygen never replaces a file."""
+    if AUTO_KEY.is_file():
+        return
+    temporary = AUTO_KEY.with_suffix('.new')
+    temporary.unlink(missing_ok=True)
+    try:
+        subprocess.run(
+            [AGE_KEYGEN, '-o', str(temporary)], capture_output=True, timeout=15, check=True
+        )
+    except subprocess.SubprocessError:
+        raise ProbeError('keyFailed') from None
+    os.chmod(temporary, 0o400)
+    try:
+        os.link(temporary, AUTO_KEY)  # never replace a key that appeared meanwhile
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def connect_router(password):
+    """Phone setup: log in to the default gateway first; main() then keeps the entry on this Pi."""
     if not PHONE_SETUP:
         raise ProbeError('setupUnavailable')
-    if os.path.exists(VAULT):
-        raise ProbeError('alreadyConfigured')
     device = {'origin': 'http://' + default_gateway(), 'username': '', 'password': password}
-    router = PortRouter(device['origin'])
-    router.login('admin', password)
-    encrypt_vault(phrase, {'schemaVersion': 1, 'devices': {'router': device}})
+    router = open_session(device)
+    router.entries = {'router': device, 'modem': None}
+    try:
+        create_auto_key()
+        router.saved = remember(router.entries)
+    except (*FAILURES, subprocess.SubprocessError) as error:
+        router.saved = False
+        print(f'automatic unlock save failed: {type(error).__name__}', file=sys.stderr, flush=True)
     return router
 
 
 def receive(connection, uid):
     """Owner/root send the router entry over SSH. The overview (phone unlock) may send only the
     vault phrase; the router entry then comes from the Pi's ciphertext copy of the vault. With
-    phone setup enabled it may instead send the router password and a new phrase once."""
+    phone setup enabled it may instead send the router password."""
     modem = None
     if uid is not None and uid in (0, OWNER_UID):
         device = read_request(connection, 32768)
@@ -589,19 +599,14 @@ def receive(connection, uid):
         request = read_request(connection, 4096)
         if (
             not isinstance(request, dict)
-            or set(request) not in ({'phrase'}, {'phrase', 'password'})
+            or set(request) not in ({'phrase'}, {'password'})
             or not all(isinstance(value, str) for value in request.values())
-            or not 1 <= len(request['phrase'].encode()) <= 1024
+            or not all(1 <= len(value.encode()) <= 1024 for value in request.values())
             or any(c in value for value in request.values() for c in '\r\n\x00')
         ):
             raise ProbeError('invalidCredentials')
         if 'password' in request:
-            if (
-                len(request['phrase'].encode()) < MIN_SETUP_PHRASE_BYTES
-                or not 1 <= len(request['password'].encode()) <= 1024
-            ):
-                raise ProbeError('invalidCredentials')
-            return connect_router(request['password'], request['phrase'])
+            return connect_router(request['password'])
         document = decrypt_vault(request['phrase'])
         devices = document.get('devices') if isinstance(document, dict) else None
         device = devices.get('router') if isinstance(devices, dict) else None
@@ -631,7 +636,7 @@ def open_session(device):
 def remember(entries):
     """Keep the entries for automatic unlock, only while the owner's key exists."""
     if not AUTO_KEY.is_file():
-        return
+        return False
     temporary = AUTO_ENTRIES.with_suffix('.new')
     try:
         result = subprocess.run(
@@ -648,7 +653,10 @@ def remember(entries):
         outcome = 'saved'
     except (OSError, subprocess.SubprocessError) as error:
         outcome = type(error).__name__  # never the arguments or output
+    finally:
+        temporary.unlink(missing_ok=True)
     print(f'automatic unlock {outcome}', file=sys.stderr, flush=True)
+    return outcome == 'saved'
 
 
 def remembered():
@@ -656,6 +664,8 @@ def remembered():
     if not AUTO_KEY.is_file() or not AUTO_ENTRIES.is_file():
         return None
     try:
+        if AUTO_ENTRIES.stat().st_size > 65536 or AUTO_KEY.stat().st_size > 4096:
+            return None
         result = subprocess.run(
             [AGE, '--decrypt', '--identity', str(AUTO_KEY), str(AUTO_ENTRIES)],
             capture_output=True,
@@ -668,14 +678,22 @@ def remembered():
         return None
 
 
+# The router answered without judging a password: retried later with longer waits.
+RETRYABLE_LOGIN_FAILURES = frozenset({'invalidSession', 'loginUnavailable'})
+# The router judged the saved password and refused it: never tried again, also after a restart.
+PASSWORD_REJECTIONS = frozenset({'authenticationRejected', 'invalidServerProof'})
+
+
 class AutoUnlock:
     """Opens the router session from the saved entries. A rejected password stops it until the next
-    phone unlock or restart, so a changed password can never lock the router by repetition."""
+    phone unlock and its saved entry is removed, including across restarts. Other refusals stop it
+    in memory only, so a restart tries the saved entry again."""
 
     def __init__(self):
         self.next_at = 0
         self.wait = AUTO_RETRY_SECONDS[0]
         self.is_stopped = False
+        self.is_unreadable = False
 
     def reset(self):
         self.__init__()
@@ -685,6 +703,7 @@ class AutoUnlock:
             return None
         self.next_at = now + self.wait
         entries = remembered()
+        self.is_unreadable = entries is None
         if entries is None:
             return None  # off or not saved; looked at again later, no login is made
         try:
@@ -694,15 +713,29 @@ class AutoUnlock:
             outcome = 'opened'
         except ProbeError as error:
             router, outcome = None, str(error)
-            if outcome == 'invalidSession':
-                self.wait = min(self.wait * 2, AUTO_RETRY_SECONDS[1])  # login page not ready yet
+            if outcome in RETRYABLE_LOGIN_FAILURES:
+                self.wait = min(self.wait * 2, AUTO_RETRY_SECONDS[1])  # no password was judged
             else:
-                self.is_stopped = True  # the password may have been tested: never repeat it
+                self.is_stopped = True
+                if outcome in PASSWORD_REJECTIONS:
+                    # Forget the entry across restarts; preserve the legacy vault and Pi key.
+                    AUTO_ENTRIES.unlink(missing_ok=True)
         except FAILURES as error:
             router, outcome = None, type(error).__name__  # unreachable router: try again later
             self.wait = min(self.wait * 2, AUTO_RETRY_SECONDS[1])
         print(f'automatic unlock {outcome}', file=sys.stderr, flush=True)
         return router
+
+
+def access(auto):
+    """What opens a locked session: what the phone would ask for, and whether nobody has to."""
+    return {
+        'unlockBy': 'password' if PHONE_SETUP else 'phrase',
+        'isReconnecting': AUTO_KEY.is_file()
+        and AUTO_ENTRIES.is_file()
+        and not auto.is_stopped
+        and not auto.is_unreadable,
+    }
 
 
 def write_json(path, value):
@@ -883,7 +916,7 @@ def set_block(router, mac, blocked, sleep=time.sleep):
             or str(host['MACAddress']).replace(':', '-')
         )
         # The router's own MAC spelling, as its page compares strings exactly.
-        entries = entries + [{'HostName': str(name)[:64], 'MACAddress': host['MACAddress']}]
+        entries = [*entries, {'HostName': str(name)[:64], 'MACAddress': host['MACAddress']}]
     else:
         entries = [entry for entry in entries if str(entry.get('MACAddress', '')).lower() != mac]
     allowed = [
@@ -964,7 +997,10 @@ def set_port(router, port, enabled, sleep=time.sleep):
 def poll(router, state, history, failures):
     """One scheduled read. Returns (router or None when the session ended, state, failures)."""
     try:
-        return router, read_state(router, history), 0
+        reading = read_state(router, history)
+        if hasattr(router, 'saved'):
+            reading['saved'] = router.saved
+        return router, reading, 0
     except FAILURES:
         # One slow or dropped read must not end the session; the overview ages the last
         # reading to stale meanwhile. Reads never resend the password.
@@ -984,127 +1020,170 @@ def listen(path):
     return listener
 
 
-def main():
-    history = History()
-    state = {'status': 'locked', 'observedAt': None, 'devices': []}
-    save(state)
-    unlock, control = listen(UNLOCK_SOCKET), listen(CONTROL_SOCKET)
-    router = None
-    next_poll = 0
-    poll_failures = 0
-    last_web_unlock = -WEB_UNLOCK_INTERVAL_SECONDS
-    # Baseline at start, independent of the session: a window that opens while locked is applied on unlock.
-    schedule_last = schedule_actions(load_schedules(), {}, *local_week_minute())[0]
-    last_action = 0
-    auto, next_modem = AutoUnlock(), 0
-    while True:
-        ready, _, _ = select.select([unlock, control], [], [], 1)
-        if unlock in ready:
-            connection, _ = unlock.accept()
-            with connection:
-                status, uid = 'unlockFailed', None
-                try:
-                    uid = peer_uid(connection)
-                    if uid == OVERVIEW_UID and router is not None:
-                        status = 'current'  # a phone attempt never replaces a working session
-                    elif (
-                        uid == OVERVIEW_UID
-                        and time.monotonic() - last_web_unlock < WEB_UNLOCK_INTERVAL_SECONDS
-                    ):
-                        status = 'busy'
-                    else:
-                        if uid == OVERVIEW_UID:
-                            last_web_unlock = time.monotonic()
-                        candidate = receive(connection, uid)
-                        state = read_state(candidate, history)
-                        router, poll_failures = candidate, 0
-                        save(state)
-                        next_poll = time.monotonic() + POLL_SECONDS
-                        status = 'current'
-                except ProbeError as error:
-                    if str(error) == 'notConfigured' and uid == OVERVIEW_UID:
-                        # No vault: no password was tried, so the phone keeps its one attempt.
-                        # Reaching this point means the previous attempt is already outside the window.
-                        last_web_unlock = -WEB_UNLOCK_INTERVAL_SECONDS
-                    # Do not retry a failed password or replace a working session.
-                    status = (
-                        str(error)
-                        if str(error) in ('notConfigured', 'alreadyConfigured', 'setupUnavailable')
-                        else 'unlockFailed'
-                    )
-                except FAILURES:
-                    pass
-                if uid == OVERVIEW_UID:
-                    print(f'phone unlock outcome={status}', file=sys.stderr, flush=True)
-                try:
-                    connection.sendall(json.dumps({'status': status}).encode())
-                except OSError:
-                    pass  # the requester may have closed its bounded unlock request
-            entries = getattr(router, 'entries', None)
-            if entries is not None:
-                router.entries = None
+class RouterMonitor:
+    """One session lifecycle; socket actions and scheduled reads share bounded retry state."""
+
+    def __init__(self):
+        self.history = History()
+        self.auto, self.next_modem = AutoUnlock(), 0
+        self.state = {'status': 'locked', 'observedAt': None, 'devices': []}
+        save(self.state, self.auto)
+        self.unlock, self.control = listen(UNLOCK_SOCKET), listen(CONTROL_SOCKET)
+        self.router = None
+        self.next_poll = 0
+        self.poll_failures = 0
+        self.last_web_unlock = -WEB_UNLOCK_INTERVAL_SECONDS
+        # Baseline at start, independent of the session: a window that opens while locked is applied on unlock.
+        self.schedule_last = schedule_actions(load_schedules(), {}, *local_week_minute())[0]
+        self.last_action = 0
+
+    def run(self):
+        while True:
+            ready, _, _ = select.select([self.unlock, self.control], [], [], 1)
+            if self.unlock in ready:
+                self.accept_unlock()
+            if self.control in ready:
+                self.apply_control()
+            if self.router is None:
+                self.reconnect()
+            if self.router is not None and time.monotonic() >= self.next_modem:
+                self.refresh_modem()
+            if self.router is not None and time.monotonic() >= self.next_poll:
+                self.refresh_telemetry()
+
+    def accept_unlock(self):
+        connection, _ = self.unlock.accept()
+        with connection:
+            status, uid = 'unlockFailed', None
+            try:
+                uid = peer_uid(connection)
+                if uid == OVERVIEW_UID and self.router is not None:
+                    status = 'current'  # a phone attempt never replaces a working session
+                elif (
+                    uid == OVERVIEW_UID
+                    and time.monotonic() - self.last_web_unlock < WEB_UNLOCK_INTERVAL_SECONDS
+                ):
+                    status = 'busy'
+                else:
+                    if uid == OVERVIEW_UID:
+                        self.last_web_unlock = time.monotonic()
+                    candidate = receive(connection, uid)
+                    self.state = read_state(candidate, self.history)
+                    self.router, self.poll_failures = candidate, 0
+                    if hasattr(candidate, 'saved'):
+                        self.state['saved'] = candidate.saved
+                        if not candidate.saved:
+                            self.last_web_unlock = -WEB_UNLOCK_INTERVAL_SECONDS
+                            print('phone unlock current saved=false', file=sys.stderr, flush=True)
+                    save(self.state, self.auto)
+                    self.next_poll = time.monotonic() + POLL_SECONDS
+                    status = 'current'
+            except ProbeError as error:
+                # A refused phone attempt says nothing about the saved entry; it keeps its own
+                # retry and refusal rules.
+                if str(error) == 'notConfigured' and uid == OVERVIEW_UID:
+                    # No vault: no password was tried, so the phone keeps its one attempt.
+                    # Reaching this point means the previous attempt is already outside the window.
+                    self.last_web_unlock = -WEB_UNLOCK_INTERVAL_SECONDS
+                # Do not retry a failed password or replace a working session.
+                status = (
+                    str(error)
+                    if str(error) in ('notConfigured', 'setupUnavailable')
+                    else 'unlockFailed'
+                )
+            except FAILURES:
+                pass
+            if uid == OVERVIEW_UID:
+                print(f'phone unlock outcome={status}', file=sys.stderr, flush=True)
+            try:
+                connection.sendall(
+                    json.dumps({'status': status, 'saved': self.state.get('saved')}).encode()
+                )
+            except OSError:
+                pass  # the requester may have closed its bounded unlock request
+        entries = getattr(self.router, 'entries', None)
+        if entries is not None:
+            self.router.entries = None
+            if not hasattr(self.router, 'saved'):
                 remember(entries)
-                auto.reset()
-                read_modem(entries.get('modem'), is_owner_present=True)
-                next_modem = time.monotonic() + MODEM_INTERVAL_SECONDS
-                entries = None
-        if control in ready:
-            connection, _ = control.accept()
-            with connection:
-                try:
-                    if peer_uid(connection) not in (0, OWNER_UID, OVERVIEW_UID):
-                        raise ProbeError('unauthorizedClient')
-                    kind, target, value = parse_action(read_request(connection, 256))
-                    if router is None:
-                        outcome = 'locked'
-                    elif time.monotonic() - last_action < ACTION_INTERVAL_SECONDS:
-                        outcome = 'busy'
-                    else:
-                        last_action = time.monotonic()
-                        try:
-                            outcome = (set_port if kind == 'port' else set_block)(
-                                router, target, value
-                            )
-                        except FAILURES:
-                            outcome = 'unverified'  # the write may have happened; never repeat it
-                        # A paused device is logged without its MAC.
-                        print(
-                            f'port {target} enabled={value} outcome={outcome}'
-                            if kind == 'port'
-                            else f'device blocked={value} outcome={outcome}',
-                            file=sys.stderr,
-                            flush=True,
-                        )
-                        # Save a post-change reading before answering: the page reloads on the reply,
-                        # and an older file would show the switch snapping back.
-                        router, state, poll_failures = poll(router, state, history, poll_failures)
-                        save(state)
-                        next_poll = time.monotonic() + POLL_SECONDS
-                    connection.sendall(json.dumps({'status': outcome}).encode())
-                except FAILURES:
+            self.auto.reset()
+            read_modem(entries.get('modem'), is_owner_present=True)
+            self.next_modem = time.monotonic() + MODEM_INTERVAL_SECONDS
+            entries = None
+
+    def apply_control(self):
+        connection, _ = self.control.accept()
+        with connection:
+            try:
+                if peer_uid(connection) not in (0, OWNER_UID, OVERVIEW_UID):
+                    raise ProbeError('unauthorizedClient')
+                kind, target, value = parse_action(read_request(connection, 256))
+                if self.router is None:
+                    outcome = 'locked'
+                elif time.monotonic() - self.last_action < ACTION_INTERVAL_SECONDS:
+                    outcome = 'busy'
+                else:
+                    self.last_action = time.monotonic()
                     try:
-                        connection.sendall(b'{"status":"invalid"}')
-                    except OSError:
-                        pass
-        if router is None:
-            candidate = auto.attempt(time.monotonic())
-            if candidate is not None:
-                candidate.entries = None  # already saved; not kept in memory
-                router, state, poll_failures = poll(candidate, state, history, 0)
-                save(state)
-                next_poll = time.monotonic() + POLL_SECONDS
-        if router is not None and time.monotonic() >= next_modem:
-            # With automatic unlock the modem is read every few hours; without it, once per unlock.
-            next_modem = time.monotonic() + MODEM_INTERVAL_SECONDS
-            read_modem((remembered() or {}).get('modem'), is_owner_present=False)
-        if router is not None and time.monotonic() >= next_poll:
-            router, state, poll_failures = poll(router, state, history, poll_failures)
-            if (
-                router is not None
-            ):  # while locked the baseline stays put, so unlock applies missed edges
-                schedule_last = run_schedules(router, schedule_last)
-            save(state)
-            next_poll = time.monotonic() + POLL_SECONDS
+                        outcome = (set_port if kind == 'port' else set_block)(
+                            self.router, target, value
+                        )
+                    except FAILURES:
+                        outcome = 'unverified'  # the write may have happened; never repeat it
+                    # A paused device is logged without its MAC.
+                    print(
+                        f'port {target} enabled={value} outcome={outcome}'
+                        if kind == 'port'
+                        else f'device blocked={value} outcome={outcome}',
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    # Save a post-change reading before answering: the page reloads on the reply,
+                    # and an older file would show the switch snapping back.
+                    self.router, self.state, self.poll_failures = poll(
+                        self.router, self.state, self.history, self.poll_failures
+                    )
+                    save(self.state, self.auto)
+                    self.next_poll = time.monotonic() + POLL_SECONDS
+                connection.sendall(json.dumps({'status': outcome}).encode())
+            except FAILURES:
+                try:
+                    connection.sendall(b'{"status":"invalid"}')
+                except OSError:
+                    pass
+
+    def reconnect(self):
+        candidate = self.auto.attempt(time.monotonic())
+        if candidate is not None:
+            candidate.entries = None  # already saved; not kept in memory
+            self.router, self.state, self.poll_failures = poll(
+                candidate, self.state, self.history, 0
+            )
+            save(self.state, self.auto)
+            self.next_poll = time.monotonic() + POLL_SECONDS
+        elif self.state != (locked := {**self.state, **access(self.auto)}):
+            self.state = locked
+            save(self.state, self.auto)
+
+    def refresh_modem(self):
+        # With automatic unlock the modem is read every few hours; without it, once per unlock.
+        self.next_modem = time.monotonic() + MODEM_INTERVAL_SECONDS
+        read_modem((remembered() or {}).get('modem'), is_owner_present=False)
+
+    def refresh_telemetry(self):
+        self.router, self.state, self.poll_failures = poll(
+            self.router, self.state, self.history, self.poll_failures
+        )
+        if (
+            self.router is not None
+        ):  # while locked the baseline stays put, so unlock applies missed edges
+            self.schedule_last = run_schedules(self.router, self.schedule_last)
+        save(self.state, self.auto)
+        self.next_poll = time.monotonic() + POLL_SECONDS
+
+
+def main():
+    RouterMonitor().run()
 
 
 if __name__ == '__main__':

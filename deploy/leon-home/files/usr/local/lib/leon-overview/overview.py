@@ -38,7 +38,7 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import collector  # noqa: E402  (the LEÓN snapshot collector, copied beside this file)
+import collector
 import internet_health
 import network_map
 import router_telemetry
@@ -64,7 +64,7 @@ TABLET_SUMMARY_FILE = '/var/lib/leon-tablet-phone/summary.json'
 ROUTER_CONTROL_SOCKET = '/run/leon-router/control.sock'
 ROUTER_UNLOCK_SOCKET = '/run/leon-router/unlock.sock'
 UNLOCK_OUTCOMES = frozenset(
-    {'current', 'unlockFailed', 'busy', 'notConfigured', 'alreadyConfigured', 'setupUnavailable'}
+    {'current', 'unlockFailed', 'busy', 'notConfigured', 'setupUnavailable'}
 )
 NETMAP_STATE = '/var/lib/leon-netmap/state.json'
 KNOWN_DEVICES = '/var/lib/leon-newdevice/known.json'  # MAC -> first-known time (new-device alert)
@@ -211,7 +211,8 @@ class PiHole:
         self.sid = None
 
     def call(self, method, path, body=None):
-        request = urllib.request.Request(
+        # Fixed loopback Pi-hole HTTP origin and internal API paths.
+        request = urllib.request.Request(  # noqa: S310
             PIHOLE + path,
             method=method,
             data=None if body is None else json.dumps(body).encode(),
@@ -298,7 +299,11 @@ def tablet_summary():
 def tailnet():
     try:
         result = subprocess.run(
-            ['tailscale', 'status', '--json'], capture_output=True, timeout=4, check=True
+            # Fixed runtime tool from the service PATH; callers cannot select an executable.
+            ['tailscale', 'status', '--json'],  # noqa: S607
+            capture_output=True,
+            timeout=4,
+            check=True,
         )
         status = json.loads(result.stdout)
     except (OSError, subprocess.SubprocessError, ValueError):
@@ -327,19 +332,21 @@ def tailnet():
 
 
 def backups():
+    """Count archives and retain only the latest metadata; never retain the directory listing."""
+    count, latest = 0, None
     try:
-        files = [
-            os.path.join(BACKUPS, name)
-            for name in os.listdir(BACKUPS)
-            if name.endswith('.tar.gz.age')
-        ]
-        latest = max(files, key=os.path.getmtime)
-        return {
-            'count': len(files),
-            'at': os.path.getmtime(latest),
-            'bytes': os.path.getsize(latest),
-        }
-    except (OSError, ValueError):
+        with os.scandir(BACKUPS) as entries:
+            for entry in entries:
+                if not entry.name.endswith('.tar.gz.age'):
+                    continue
+                info = entry.stat()
+                count += 1
+                if latest is None or info.st_mtime > latest.st_mtime:
+                    latest = info
+        if latest is None:
+            return None
+        return {'count': count, 'at': latest.st_mtime, 'bytes': latest.st_size}
+    except OSError:
         return None
 
 
@@ -352,7 +359,8 @@ def repositories():
     for name in names:
         try:
             result = subprocess.run(
-                [
+                # Fixed system tool from the service PATH; executable is not supplied by a request.
+                [  # noqa: S607
                     'git',
                     '-c',
                     'safe.directory=*',
@@ -368,7 +376,7 @@ def repositories():
                 timeout=4,
                 check=True,
             )
-            stamp, branch, subject = (result.stdout.strip().split('\t', 2) + ['', '', ''])[:3]
+            stamp, branch, subject = ([*result.stdout.strip().split('\t', 2), '', '', ''])[:3]
             found.append(
                 {
                     'name': name.removesuffix('.git'),
@@ -411,17 +419,19 @@ def modem_reading():
         return None
 
 
-def sample():
-    snapshot = collector.collect()
-    network = snapshot.get('network') or {}
+def sample_internet(network):
     router = next((d['ip'] for d in network.get('devices', []) if d.get('role') == 'router'), None)
     try:
         internet = collector.health(router) if router else None
     except (OSError, ValueError):
         internet = None
-    devices = []
-    for device in network.get('devices', []):
-        devices.append({**device, 'label': local_name(device['ip'])})
+    return internet
+
+
+def sample_devices(network):
+    devices = [
+        {**device, 'label': local_name(device['ip'])} for device in network.get('devices', [])
+    ]
     try:
         with open(NAMES_STATUS, encoding='utf-8') as handle:
             naming = json.load(handle)
@@ -431,6 +441,14 @@ def sample():
     for device in devices:
         device['source'] = sources.get(device['ip'])
     apply_identity(devices, time.time())
+    return devices, naming
+
+
+def sample():
+    snapshot = collector.collect()
+    network = snapshot.get('network') or {}
+    internet = sample_internet(network)
+    devices, naming = sample_devices(network)
     return {
         'at': time.time(),
         'naming': naming,
@@ -674,6 +692,62 @@ def record_daily_facts(data):
         print(f'daily facts failed: {type(error).__name__}', file=sys.stderr, flush=True)
 
 
+def record_monitoring_facts(data):
+    """Five-minute projection for optional alerts: no names, addresses or credentials."""
+    now = int(time.time())
+    stored = data.get('tabletSummary') or {}
+    summary = stored.get('summary') or {}
+    peer = data.get('tabletPeer')
+    online = (
+        next(
+            (item.get('online') for item in data.get('peers') or [] if item.get('name') == peer),
+            None,
+        )
+        if peer
+        else None
+    )
+    snapshot = data.get('snapshot') or {}
+    free, total = snapshot.get('storageFreeBytes'), snapshot.get('storageTotalBytes')
+    owned = owner_names()
+    unnamed = sum(
+        1
+        for device in data.get('devices', [])[:64]
+        if device.get('mac')
+        and device.get('mac') not in owned
+        and device.get('source') != 'registry'
+    )
+    if network_map.snapshot(data, now)['freshness'] != 'current':
+        unnamed = None
+    facts = {
+        'at': now,
+        'tabletOnline': online,
+        'receivedAt': stored.get('receivedAt'),
+        'observedAt': summary.get('observedAt'),
+        'hasAdb': bool(summary.get('battery') is not None or summary.get('display') is not None),
+        'storageObservedAt': data.get('at'),
+        'storageFreePercent': free * 100 / total
+        if type(free) is int and type(total) is int and 0 <= free <= total and total > 0
+        else None,
+        'unnamedDevices': unnamed,
+    }
+    internet_health.save_json(
+        os.path.join(os.path.dirname(DAILY_FACTS), 'monitoring-facts.json'), facts
+    )
+
+
+def refresh_monitoring_facts(data, started, last_at):
+    """Best effort every five minutes: a failure is logged once per window and never holds back
+    the phone's sample. Returns the time of the latest attempt."""
+    if started - last_at < 300:
+        return last_at
+    try:
+        record_monitoring_facts(data)
+    # Optional monitoring cannot prevent publishing a successful sample; category is logged.
+    except Exception as error:  # noqa: BLE001
+        print(f'monitoring facts failed: {type(error).__name__}', file=sys.stderr, flush=True)
+    return started
+
+
 def save_internet_and_exit(signum, frame):
     """systemd stops with SIGTERM: keep the samples since the last periodic save (installs restart often)."""
     try:
@@ -686,16 +760,19 @@ def save_internet_and_exit(signum, frame):
 def sampler():
     load_temperatures()
     _internet.extend(internet_health.load(INTERNET_STATE, time.time()))
+    monitoring_at = 0
     while True:
         started = time.time()
         try:
             data = sample()
             record_temperature(data['host'].get('temperatureCelsius'))
             record_internet(data)
+            monitoring_at = refresh_monitoring_facts(data, started, monitoring_at)
             with _lock:
                 _data.clear()
                 _data.update(data)
-        except Exception as error:  # keep the last good sample; report once per failure
+        # Optional monitoring cannot prevent publishing a successful sample; category is logged.
+        except Exception as error:  # noqa: BLE001
             print(f'sample failed: {type(error).__name__}: {error}', file=sys.stderr, flush=True)
         time.sleep(max(5, SAMPLE_SECONDS - (time.time() - started)))
 
@@ -1105,9 +1182,7 @@ OFFLINE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 font:15px/1.5 -apple-system,system-ui,sans-serif;text-align:center;padding:24px}img{width:64px;height:64px}p{color:#a39e94;max-width:300px}
 a{display:inline-block;margin-top:12px;color:#111;background:#eeeae3;border-radius:999px;padding:10px 18px;text-decoration:none}</style></head>
 <body><div><img src="/brand/symbol.png" alt=""><h1>Offline · Sin conexión</h1><p>LEÓN Home is unreachable. Connect Tailscale and try again.
-Readings are not stored on this phone.</p><p lang="es">No se puede contactar a LEÓN Home. Conecta Tailscale y reintenta.</p><a href="/">Try again · Reintentar</a></div></body></html>""".encode(
-    'utf-8'
-)
+Readings are not stored on this phone.</p><p lang="es">No se puede contactar a LEÓN Home. Conecta Tailscale y reintenta.</p><a href="/">Try again · Reintentar</a></div></body></html>""".encode()
 
 
 def port_action(port, enabled):
@@ -1414,7 +1489,7 @@ def router_action(request):
 
 def router_unlock(request):
     """Forward the owner's vault phrase once; the monitor decrypts its vault copy. With a router
-    password it asks the monitor to create the vault instead. Never logged or kept."""
+    password the monitor connects and keeps it on this Pi. Never logged or kept here."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(60)  # vault scrypt on the Pi (~8 s), router login and first reads
         connection.connect(ROUTER_UNLOCK_SOCKET)
@@ -1434,7 +1509,8 @@ STORAGE_MOUNT = '/srv/leon-storage'
 def usb_storage_view():
     try:
         result = subprocess.run(
-            [
+            # Fixed system tool from the service PATH; executable is not supplied by a request.
+            [  # noqa: S607
                 'lsblk',
                 '--json',
                 '--bytes',
@@ -1571,7 +1647,12 @@ def samba_shares():
 def tailscale_address():
     try:
         result = subprocess.run(
-            ['tailscale', 'ip', '-4'], capture_output=True, text=True, timeout=2, check=True
+            # Fixed runtime tool from the service PATH; callers cannot select an executable.
+            ['tailscale', 'ip', '-4'],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
         )
         return str(ipaddress.IPv4Address(result.stdout.split()[0]))
     except (OSError, ValueError, IndexError, subprocess.SubprocessError):
@@ -1584,7 +1665,10 @@ def tv_server_name():
         with open(MINIDLNA_CONFIG, encoding='utf-8') as handle:
             lines = handle.read(16_384).splitlines()
         active = subprocess.run(
-            ['systemctl', 'is-active', '--quiet', 'minidlna'], timeout=2, check=False
+            # Fixed runtime tool from the service PATH; callers cannot select an executable.
+            ['systemctl', 'is-active', '--quiet', 'minidlna'],  # noqa: S607
+            timeout=2,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -1627,7 +1711,8 @@ def mounted_volume():
     label = filesystem = None
     try:
         result = subprocess.run(
-            ['findmnt', '--json', '--output', 'LABEL,FSTYPE', '--mountpoint', STORAGE_MOUNT],
+            # Fixed system tool from the service PATH; executable is not supplied by a request.
+            ['findmnt', '--json', '--output', 'LABEL,FSTYPE', '--mountpoint', STORAGE_MOUNT],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=2,
@@ -2089,9 +2174,7 @@ def app_shell(nonce):
 <meta name="theme-color" content="#0e0e0e"><meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="LEÓN Home"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="icon" href="/brand/symbol.png"><link rel="manifest" href="/manifest.webmanifest"><title>LEÓN Home</title><link rel="stylesheet" href="/network-map/assets/leon.css"><meta name="color-scheme" content="dark"></head><body><div id="app" class="app"><noscript><p class="boot-failure">LEÓN Home needs JavaScript.</p></noscript></div><script type="module" nonce="{nonce}" src="/network-map/assets/leon.js"></script></body></html>""".encode(
-        'utf-8'
-    )
+<link rel="icon" href="/brand/symbol.png"><link rel="manifest" href="/manifest.webmanifest"><title>LEÓN Home</title><link rel="stylesheet" href="/network-map/assets/leon.css"><meta name="color-scheme" content="dark"></head><body><div id="app" class="app"><noscript><p class="boot-failure">LEÓN Home needs JavaScript.</p></noscript></div><script type="module" nonce="{nonce}" src="/network-map/assets/leon.js"></script></body></html>""".encode()
 
 
 # ---------------------------------------------------------------- HTTP
@@ -2132,6 +2215,58 @@ class Handler(http.server.BaseHTTPRequestHandler):
             and not self.storage_automation
         ):
             return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
+        if path in (
+            '/api/v1/storage',
+            '/storage/download',
+            '/api/v1/storage/files',
+            '/api/v1/automation',
+        ):
+            return self.storage_get(path)
+        if (
+            path in ('/manifest.webmanifest', '/sw.js', '/offline')
+            or path in ASSETS
+            or path.startswith('/network-map/assets/')
+        ):
+            return self.web_resource(path, login)
+        if path in ('/network-map/data', '/api/v1/network'):
+            with _lock:
+                data = dict(_data)
+            return self.reply_json(200, {**network_map.snapshot(data), 'actionToken': token(login)})
+        if path == '/api/v1/session':
+            version, available = self.versions()
+            return self.reply_json(
+                200,
+                session_view(
+                    login,
+                    automation=self.storage_automation,
+                    updates=self.signed_updates,
+                    version=version,
+                    available=available,
+                ),
+            )
+        if path == '/api/v1/home':
+            with _lock:
+                view = home_view(_data)
+            return self.reply_json(200, view)
+        if path == '/api/v1/hardware':
+            with _lock:
+                data = dict(_data)
+            return self.reply_json(200, hardware_view(data))
+        route = path
+        if path.startswith('/network/device/'):
+            try:
+                segment = path.removeprefix('/network/device/')
+                ipaddress.IPv4Address(segment)
+            except ValueError:
+                return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
+            route = '/network/device/:id'
+        if route not in APP_ROUTES:
+            return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
+        nonce = base64.b64encode(os.urandom(12)).decode()
+        return self.reply(200, app_shell(nonce), 'text/html; charset=utf-8', nonce=nonce)
+
+    def storage_get(self, path):
+        """Serve bounded storage and automation queries after owner and edition checks."""
         if path == '/api/v1/storage':
             return self.reply_json(200, storage_view(show_automation=self.storage_automation))
         if path == '/storage/download':
@@ -2169,6 +2304,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply_json(
                 200, automation_view(failures_only=query.get('status') == ['failed'])
             )
+        return None
+
+    def web_resource(self, path, login):
+        """Serve only fixed app resources after owner authorization."""
         if path == '/manifest.webmanifest':
             return self.reply(
                 200, MANIFEST, 'application/manifest+json', cache='public, max-age=3600'
@@ -2196,42 +2335,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
             body, content_type = asset
             return self.reply(200, body, content_type)
-        if path in ('/network-map/data', '/api/v1/network'):
-            with _lock:
-                data = dict(_data)
-            return self.reply_json(200, {**network_map.snapshot(data), 'actionToken': token(login)})
-        if path == '/api/v1/session':
-            version, available = self.versions()
-            return self.reply_json(
-                200,
-                session_view(
-                    login,
-                    automation=self.storage_automation,
-                    updates=self.signed_updates,
-                    version=version,
-                    available=available,
-                ),
-            )
-        if path == '/api/v1/home':
-            with _lock:
-                view = home_view(_data)
-            return self.reply_json(200, view)
-        if path == '/api/v1/hardware':
-            with _lock:
-                data = dict(_data)
-            return self.reply_json(200, hardware_view(data))
-        route = path
-        if path.startswith('/network/device/'):
-            try:
-                segment = path.removeprefix('/network/device/')
-                ipaddress.IPv4Address(segment)
-            except ValueError:
-                return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
-            route = '/network/device/:id'
-        if route not in APP_ROUTES:
-            return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
-        nonce = base64.b64encode(os.urandom(12)).decode()
-        return self.reply(200, app_shell(nonce), 'text/html; charset=utf-8', nonce=nonce)
+        return None
 
     def do_POST(self):
         self.use_own_api_path()
@@ -2275,6 +2379,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     413, {'status': 'invalid', 'message': 'Request is too large.'}
                 )
             return self.reply(413, b'Too large', 'text/plain; charset=utf-8')
+        return self.dispatch_control(login, length)
+
+    def dispatch_control(self, login, length):
+        """Dispatch an already bounded owner request; action methods retain their own guards."""
         if self.path == '/api/v1/network/wake':
             return self.wake(login, length)
         if self.path == '/api/v1/storage/password':
@@ -2546,7 +2654,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             request = json.loads(self.rfile.read(length))
             if (
                 not isinstance(request, dict)
-                or set(request) not in ({'phrase'}, {'phrase', 'password'})
+                or set(request) not in ({'phrase'}, {'password'})
                 or not all(isinstance(value, str) for value in request.values())
                 or not all(1 <= len(value.encode()) <= 1024 for value in request.values())
             ):
@@ -2696,7 +2804,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             if resolved is None:
                 raise FileNotFoundError(relative)
-            handle = open(resolved[0], 'rb')  # noqa: SIM115  (closed below)
+            handle = open(resolved[0], 'rb')
         except OSError:
             return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
         with handle:

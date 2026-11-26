@@ -26,10 +26,10 @@ export function windowsAddress(url: string): string {
   return url.replace(/^smb:/, '').replaceAll('/', '\\');
 }
 
-function drivesOf(view: StorageView): Drive[] {
+function drivesOf(view: StorageView): Array<Drive> {
   const home = view.connections.find(({ platform }) => platform === 'Windows at home'),
     away = view.connections.find(({ platform }) => platform === 'Windows away from home'),
-    own: Drive[] = view.isSharingSetUp ? [{ name: view.drive.name, url: view.drive.openUrl, windowsHome: home?.address ?? null, windowsAway: away?.address ?? null }] : [];
+    own: Array<Drive> = view.isSharingSetUp ? [{ name: view.drive.name, url: view.drive.openUrl, windowsHome: home?.address ?? null, windowsAway: away?.address ?? null }] : [];
   return [...own, ...view.peers.map(({ name, url }) => ({ name, url, windowsHome: null, windowsAway: windowsAddress(url) }))];
 }
 
@@ -176,7 +176,7 @@ export function renderGuide(context: RouteContext): PageView {
             { value: 'tv', label: t('TV') },
           ],
           value: device,
-          onChange: next => {
+          onChange(next) {
             device = next;
             controls.repaint();
           },

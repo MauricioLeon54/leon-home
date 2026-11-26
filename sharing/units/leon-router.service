@@ -7,7 +7,7 @@ Wants=network-online.target
 ExecStart=/usr/bin/python3 -I /opt/leon-home/current/router/monitor.py
 User=leon-router
 Group=leon-router
-# Root only may send a router entry directly; the owner's phone creates and unlocks the vault.
+# Root only may send an entry directly; the owner's phone connects with the router password.
 Environment=ROUTER_OWNER_USER=
 Environment=ROUTER_VAULT=/var/lib/leon-router/router.age
 Environment=ROUTER_PHONE_SETUP=1
@@ -28,7 +28,7 @@ ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-# Vault setup and unlock run age, whose scrypt needs about 256 MiB and several threads.
+# Legacy phrase unlock runs age scrypt (~256 MiB); password setup uses a Pi-owned age key.
 MemoryMax=384M
 TasksMax=32
 

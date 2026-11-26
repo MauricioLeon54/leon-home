@@ -51,3 +51,8 @@ export function clock(seconds: number | null): string {
   if (seconds === null) return UNKNOWN;
   return new Date(seconds * 1000).toLocaleTimeString(dateLocale, { hour: 'numeric', minute: '2-digit' });
 }
+
+/** Legacy display predicates omit zero and NaN as well as absent readings. */
+export function isNonzeroNumber(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Boolean(value);
+}

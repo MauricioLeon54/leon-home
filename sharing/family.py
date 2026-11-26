@@ -11,8 +11,8 @@ import threading
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import overview  # noqa: E402
-import update_client  # noqa: E402
+import overview
+import update_client
 
 SOCKET = '/run/leon-home-http/http.sock'
 BODY = Path(__file__).with_name('updates.html').read_text(encoding='utf-8')

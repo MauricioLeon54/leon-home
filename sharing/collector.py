@@ -121,7 +121,7 @@ def normalize_network(state):
 
 def parse_units(text):
     units, block = [], {}
-    for line in (text or '').splitlines() + ['']:
+    for line in [*(text or '').splitlines(), '']:
         if '=' in line:
             key, value = line.split('=', 1)
             block[key] = value

@@ -1,12 +1,15 @@
 export {};
 declare const self: ServiceWorkerGlobalScope;
-const CACHE = 'leon-shell-v1';
+declare const __LEON_ASSET_VERSION__: string;
+const CACHE = `leon-shell-${__LEON_ASSET_VERSION__}`;
+// Only public files: the compiled app assets are owner-only, and one refused file would stop the
+// whole install, leaving an outdated worker in charge.
 const SHELL = ['/offline', '/brand/symbol.png', '/brand/wordmark.png', '/brand/icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then(cache => cache.addAll(SHELL))
+      .then(cache => cache.addAll(SHELL.map(path => new Request(path, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -26,8 +29,8 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(async () => (await caches.match('/offline')) ?? Response.error()));
+    event.respondWith(fetch(request).catch(async () => (await (await caches.open(CACHE)).match('/offline')) ?? Response.error()));
     return;
   }
-  if (url.pathname.startsWith('/brand/')) event.respondWith(caches.match(request).then(hit => hit ?? fetch(request)));
+  if (!url.search && SHELL.includes(url.pathname)) event.respondWith(caches.open(CACHE).then(async cache => (await cache.match(request)) ?? fetch(request)));
 });

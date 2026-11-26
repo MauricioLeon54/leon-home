@@ -94,7 +94,7 @@ export function startRouter(root: HTMLElement, routes: ReadonlyArray<Route>, ses
     const controller = new AbortController(),
       { route, params } = found,
       path = pathOf(url);
-    const parent = route.parent ? match(routes, route.parent) : null;
+    const parent = route.parent !== null && route.parent !== '' ? match(routes, route.parent) : null;
     const context: RouteContext = {
       params,
       query: url.searchParams,
@@ -102,7 +102,7 @@ export function startRouter(root: HTMLElement, routes: ReadonlyArray<Route>, ses
       signal: controller.signal,
       navigate: target => navigate(target),
       setTitle: title => navBar.update({ title, back: backFor(parent), trailing: null }),
-      setTrailing: trailing => navBar.update({ title: navBar.largeTitle.textContent ?? route.title, back: backFor(parent), trailing }),
+      setTrailing: trailing => navBar.update({ title: navBar.largeTitle.textContent, back: backFor(parent), trailing }),
     };
     const swap = () => {
       navBar.update({ title: route.title, back: backFor(parent), trailing: null });
@@ -114,7 +114,7 @@ export function startRouter(root: HTMLElement, routes: ReadonlyArray<Route>, ses
       window.scrollTo(0, direction === 'push' ? 0 : (scrollByPath.get(path) ?? 0));
     };
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (direction === 'none' || reduced || !document.startViewTransition) {
+    if (direction === 'none' || reduced || typeof document.startViewTransition !== 'function') {
       swap();
       return;
     }
@@ -126,7 +126,7 @@ export function startRouter(root: HTMLElement, routes: ReadonlyArray<Route>, ses
     if (!parent) return null;
     return {
       label: parent.route.title,
-      onBack: () => {
+      onBack() {
         if ((currentState()?.depth ?? 0) > 0) history.back();
         else navigate(parent.route.pattern, { replace: true, direction: 'pop' });
       },
@@ -140,7 +140,7 @@ export function startRouter(root: HTMLElement, routes: ReadonlyArray<Route>, ses
       return;
     }
     const depth = currentState()?.depth ?? 0;
-    if (options.replace) history.replaceState({ leon: true, depth } satisfies HistoryState, '', pathOf(url));
+    if (options.replace ?? false) history.replaceState({ leon: true, depth } satisfies HistoryState, '', pathOf(url));
     else history.pushState({ leon: true, depth: depth + 1 } satisfies HistoryState, '', pathOf(url));
     render(url, options.direction ?? 'push');
   }
@@ -169,7 +169,7 @@ export function startRouter(root: HTMLElement, routes: ReadonlyArray<Route>, ses
   window.addEventListener('popstate', () => render(new URL(location.href), 'pop'));
 
   const legacy = legacyTarget(new URL(location.href));
-  if (legacy) history.replaceState({ leon: true, depth: 0 } satisfies HistoryState, '', legacy);
+  if (Boolean(legacy)) history.replaceState({ leon: true, depth: 0 } satisfies HistoryState, '', legacy);
   else if (!currentState()) history.replaceState({ leon: true, depth: 0 } satisfies HistoryState, '', location.href);
   for (const tab of TABS) lastPathByTab.set(tab, TAB_DEFINITIONS[tab].root);
   render(new URL(location.href), 'none');

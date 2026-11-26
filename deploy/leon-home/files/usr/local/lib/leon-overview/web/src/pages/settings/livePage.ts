@@ -1,4 +1,4 @@
-import { type Child, h } from '../../core/dom.js';
+import { type Child, h, patchChildren } from '../../core/dom.js';
 import { getView, HttpError } from '../../core/http.js';
 import { poll, STALE_AFTER_MS } from '../../core/poll.js';
 import type { PageView, RouteContext } from '../../core/router.js';
@@ -19,12 +19,13 @@ export interface LivePageOptions<T> {
   path: string | (() => string);
   parse: (value: unknown) => T;
   intervalMs: number;
+  reuseReadOnlyDOM?: () => boolean;
   observedAt: (view: T) => number | null;
   build: (view: T, state: { isStale: boolean; observedAt: number | null; hasFailed: boolean }, controls: LiveControls) => ReadonlyArray<Child>;
 }
 
 /** Skeleton, polling, stale banner and failure state for a settings page; repaints only when no action or edit is in flight. */
-export function livePage<T>({ path, parse, intervalMs, observedAt, build }: LivePageOptions<T>): PageView {
+export function livePage<T>({ path, parse, intervalMs, observedAt, build, reuseReadOnlyDOM }: LivePageOptions<T>): PageView {
   const banner = createBanner(),
     content = h('div', { className: 'settings-page' }, [skeleton(3)]),
     element = h('div', { className: 'page' }, [banner.element, content]);
@@ -33,19 +34,19 @@ export function livePage<T>({ path, parse, intervalMs, observedAt, build }: Live
     hasFailed = false,
     busy = 0;
 
-  function paint(): void {
+  function paint(incremental = false): void {
     if (view === null || busy > 0) return;
     const active = document.activeElement;
     // Never rebuild under a field being edited; the next poll or action repaints.
     if (active instanceof HTMLInputElement && content.contains(active)) return;
     const focusKey = active instanceof HTMLElement && content.contains(active) ? active.dataset.focusKey : undefined;
-    content.replaceChildren(
-      ...build(view, { isStale, hasFailed, observedAt: observedAt(view) }, controls).filter((child): child is Node | string => child !== null && child !== undefined && child !== false)
-    );
-    if (focusKey) content.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+    const children = build(view, { isStale, hasFailed, observedAt: observedAt(view) }, controls);
+    if (incremental && (reuseReadOnlyDOM?.() ?? false)) patchChildren(content, children);
+    else content.replaceChildren(...children.filter((child): child is Node | string => child !== null && child !== undefined && child !== false));
+    if (focusKey !== undefined && focusKey !== '') content.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
   const controls: LiveControls = {
-    repaint: paint,
+    repaint: () => paint(),
     async run(work) {
       busy++;
       try {
@@ -65,7 +66,7 @@ export function livePage<T>({ path, parse, intervalMs, observedAt, build }: Live
       isStale = false;
       hasFailed = false;
       banner.hide();
-      paint();
+      paint(true);
     },
     onFailure(error, lastSuccessMs) {
       if (view === null || lastSuccessMs === null) {

@@ -18,7 +18,7 @@ function chart(className: string, label: string | null): SVGSVGElement {
   svg.setAttribute('class', `net-chart ${className}`);
   svg.setAttribute('viewBox', '0 0 300 120');
   svg.setAttribute('preserveAspectRatio', 'none');
-  if (label) svg.setAttribute('aria-label', label);
+  if (label !== null && label !== '') svg.setAttribute('aria-label', label);
   else svg.setAttribute('aria-hidden', 'true');
   return svg;
 }
@@ -62,7 +62,7 @@ function deviceRows(snapshot: Snapshot, state: NetworkState): HTMLElement {
     rows = snapshot.devices
       .filter((device): device is Device & { traffic: Traffic } => device.traffic !== null)
       .sort((left, right) => (right.traffic.downloadRouterMbps ?? -1) - (left.traffic.downloadRouterMbps ?? -1)),
-    top = Math.max(1, ...rows.map(device => device.traffic.downloadRouterMbps || 0)),
+    top = Math.max(1, ...rows.map(device => device.traffic.downloadRouterMbps ?? 0)),
     meta = rows.length ? `${rows.length} ${rows.length === 1 ? t('device') : t('devices')}` : undefined;
   const items = rows.map(device => {
     const spark = chart('spark', null);
@@ -70,7 +70,7 @@ function deviceRows(snapshot: Snapshot, state: NetworkState): HTMLElement {
     return h('li', { className: 'list-item' }, [
       h('a', { className: 'traffic-row', attrs: { href: devicePath(device.id) }, dataset: { focusKey: device.id } }, [
         h('span', { className: 'icon-badge' }, [icon(device.traffic.connection, 'k')]),
-        h('div', { className: 'name' }, [device.name, h('small', { text: device.address }), isCurrent ? rateBar(((device.traffic.downloadRouterMbps || 0) / top) * 100) : null]),
+        h('div', { className: 'name' }, [device.name, h('small', { text: device.address }), isCurrent ? rateBar(((device.traffic.downloadRouterMbps ?? 0) / top) * 100) : null]),
         spark,
         h('div', { className: 'num' }, [
           h('span', { className: 'd', text: isCurrent ? `↓ ${mbps(device.traffic.downloadRouterMbps)}` : '—' }),
@@ -79,7 +79,7 @@ function deviceRows(snapshot: Snapshot, state: NetworkState): HTMLElement {
       ]),
     ]);
   });
-  return section({ title: t('By device'), ...(meta ? { meta } : {}) }, [
+  return section({ title: t('By device'), ...(meta !== undefined && meta !== '' ? { meta } : {}) }, [
     rows.length
       ? h('ul', { className: 'list traffic-list' }, items)
       : h('p', { className: 'note', text: isCurrent ? t('No device is reporting traffic right now.') : t('No current router reading. Unlock the router session to see traffic by device.') }),
@@ -88,7 +88,7 @@ function deviceRows(snapshot: Snapshot, state: NetworkState): HTMLElement {
 
 function outageRows(health: InternetHealth | null): HTMLElement {
   const outages = [...(health?.outages ?? [])].reverse();
-  if (!outages.length) return h('p', { className: 'note', text: health?.samples ? t('No outages in the last 24 hours.') : t('No history yet.') });
+  if (!outages.length) return h('p', { className: 'note', text: Boolean(health?.samples) ? t('No outages in the last 24 hours.') : t('No history yet.') });
   return h(
     'ul',
     { className: 'list' },
@@ -106,32 +106,67 @@ function outageRows(health: InternetHealth | null): HTMLElement {
   );
 }
 
+function numberText(value: number | null | undefined, format: (value: number) => string): string | null {
+  return typeof value === 'number' ? format(value) : null;
+}
+function millisecondsText(value: number): string {
+  return `${Math.round(value)} ms`;
+}
+function percentText(value: number): string {
+  return `${value}%`;
+}
+function decimalText(value: number): string {
+  return `${value.toFixed(1)} dBm`;
+}
+function roundedPercent(value: number): string {
+  return `${Math.round(value)}%`;
+}
+
+function latencyHistory(title: string, values: Array<number | null>): Array<Child> {
+  const svg = chart('latency', title);
+  drawChart(
+    svg,
+    values.map(value => [value, null]),
+    ['latency', 'u']
+  );
+  return [
+    h('h3', { className: 'subhead', text: title }),
+    card([
+      values.some(value => value !== null) ? svg : h('p', { className: 'note', text: t('Waiting for latency readings.') }),
+      h('div', { className: 'axis' }, [h('span', { text: t('24 h ago') }), h('span', { text: t('now') })]),
+      h('p', { className: 'note', text: t('Average response time in ms per 15 minutes. Gaps mean no successful reading.') }),
+    ]),
+  ];
+}
+
+function internetReadings(health: InternetHealth | null): HTMLElement {
+  const current = health?.current,
+    state = current ? { kind: 'current' as const } : { kind: 'unknown' as const },
+    availability = numberText(health?.availability, value => `${value.toFixed(value === 100 ? 0 : 1)}%`),
+    internetMs = numberText(current?.internetMs, millisecondsText),
+    routerMs = numberText(current?.routerMs, value => `${value.toFixed(1)} ms`),
+    routerLoss = numberText(current?.routerLossPercent, percentText),
+    status = !current ? null : current.state === 'up' ? t('Online') : t('Outage'),
+    dnsMs = numberText(current?.dnsMs, millisecondsText);
+  return card([
+    readingGrid([
+      reading({
+        label: current && current.state !== 'up' ? t('Likely cause: {0}', CAUSES[current.state].toLowerCase()) : t('Status'),
+        value: status,
+        state: current?.state === 'up' ? { kind: 'current', tone: 'good' } : current ? { kind: 'current', tone: 'warn' } : state,
+      }),
+      reading({ label: t('Available, 24 h'), value: availability, state: { kind: 'current' } }),
+      reading({ label: t('Internet'), value: internetMs, state: { kind: 'current' } }),
+      reading({ label: t('Router DNS'), value: dnsMs, state }),
+      reading({ label: t('Router'), value: routerMs, state }),
+      reading({ label: t('Router ping loss'), value: routerLoss, state }),
+    ]),
+  ]);
+}
+
 function internetSection(snapshot: Snapshot, memory: NetworkMemory): HTMLElement {
   const health = snapshot.internet,
-    current = health?.current,
-    state = current ? { kind: 'current' as const } : { kind: 'unknown' as const },
-    availability = typeof health?.availability === 'number' ? `${health.availability.toFixed(health.availability === 100 ? 0 : 1)}%` : null,
-    internetMs = typeof current?.internetMs === 'number' ? `${Math.round(current.internetMs)} ms` : null,
-    routerMs = typeof current?.routerMs === 'number' ? `${current.routerMs.toFixed(1)} ms` : null,
-    routerLoss = typeof current?.routerLossPercent === 'number' ? `${current.routerLossPercent}%` : null,
-    status = !current ? null : current.state === 'up' ? t('Online') : t('Outage'),
-    dnsMs = typeof current?.dnsMs === 'number' ? `${Math.round(current.dnsMs)} ms` : null;
-  const latencyHistory = (title: string, values: Array<number | null>): Array<Child> => {
-    const svg = chart('latency', title);
-    drawChart(
-      svg,
-      values.map(value => [value, null]),
-      ['latency', 'u']
-    );
-    return [
-      h('h3', { className: 'subhead', text: title }),
-      card([
-        values.some(value => value !== null) ? svg : h('p', { className: 'note', text: t('Waiting for latency readings.') }),
-        h('div', { className: 'axis' }, [h('span', { text: t('24 h ago') }), h('span', { text: t('now') })]),
-        h('p', { className: 'note', text: t('Average response time in ms per 15 minutes. Gaps mean no successful reading.') }),
-      ]),
-    ];
-  };
+    current = health?.current;
   const lossSeries = health?.routerLossSeries ?? [],
     lossChart = chart('latency', t('Router ping loss over 24 hours, from 0 to 100 percent'));
   drawChart(
@@ -141,20 +176,7 @@ function internetSection(snapshot: Snapshot, memory: NetworkMemory): HTMLElement
     100
   );
   return section({ title: t('Internet'), meta: current ? t('Pi, {0}', time(current.at)) : t('No current reading') }, [
-    card([
-      readingGrid([
-        reading({
-          label: current && current.state !== 'up' ? t('Likely cause: {0}', CAUSES[current.state].toLowerCase()) : t('Status'),
-          value: status,
-          state: current?.state === 'up' ? { kind: 'current', tone: 'good' } : current ? { kind: 'current', tone: 'warn' } : state,
-        }),
-        reading({ label: t('Available, 24 h'), value: availability, state: { kind: 'current' } }),
-        reading({ label: t('Internet'), value: internetMs, state: { kind: 'current' } }),
-        reading({ label: t('Router DNS'), value: dnsMs, state }),
-        reading({ label: t('Router'), value: routerMs, state }),
-        reading({ label: t('Router ping loss'), value: routerLoss, state }),
-      ]),
-    ]),
+    internetReadings(health),
     ...latencyHistory(t('Internet TCP latency · 24 h'), health?.internetLatencySeries ?? []),
     ...latencyHistory(t('Router DNS latency · 24 h'), health?.dnsLatencySeries ?? []),
     h('h3', { className: 'subhead', text: t('Router ping loss · 24 h') }),
@@ -221,11 +243,11 @@ function fiberSection(health: InternetHealth | null): HTMLElement | null {
     card([
       readingGrid([
         reading({ label: t('Provider line'), value: line.isRegistered === null ? null : line.isRegistered ? t('Connected') : t('Not connected'), state: toned(line.isRegistered === true) }),
-        reading({ label: t('Fiber signal'), value: line.rxDbm === null ? null : `${line.rxDbm.toFixed(1)} dBm`, state: toned(isSignalGood) }),
-        reading({ label: t('Signal sent'), value: line.txDbm === null ? null : `${line.txDbm.toFixed(1)} dBm`, state }),
-        reading({ label: t('Temperature'), value: line.temperatureCelsius === null ? null : `${Math.round(line.temperatureCelsius)} °C`, state: isHot ? toned(false) : state }),
-        reading({ label: t('Modem CPU'), value: line.cpuPercent === null ? null : `${Math.round(line.cpuPercent)}%`, state }),
-        reading({ label: t('Modem memory'), value: line.memoryPercent === null ? null : `${Math.round(line.memoryPercent)}%`, state }),
+        reading({ label: t('Fiber signal'), value: numberText(line.rxDbm, decimalText), state: toned(isSignalGood) }),
+        reading({ label: t('Signal sent'), value: numberText(line.txDbm, decimalText), state }),
+        reading({ label: t('Temperature'), value: numberText(line.temperatureCelsius, value => `${Math.round(value)} °C`), state: isHot ? toned(false) : state }),
+        reading({ label: t('Modem CPU'), value: numberText(line.cpuPercent, roundedPercent), state }),
+        reading({ label: t('Modem memory'), value: numberText(line.memoryPercent, roundedPercent), state }),
       ]),
       verdict === null ? null : h('p', { className: 'note', text: verdict }),
       history.length > 1 ? svg : null,

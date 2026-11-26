@@ -22,20 +22,24 @@ function description(presence: ReturnType<typeof presenceOf>, isScanCurrent: boo
   return presence === 'online' ? t('Seen in the latest scan.') : presence === 'away' ? t('Not seen in the latest scan.') : t('Presence unknown.');
 }
 
+function presenceLabel(presence: ReturnType<typeof presenceOf>): string {
+  return presence === 'online' ? t('Seen in the scan') : presence === 'away' ? t('Not seen in the scan') : t('Unknown');
+}
+
 function detailRows(device: Device, state: NetworkState): Array<ListRow> {
   const presence = presenceOf(device, scanCurrent(state)),
     isCurrent = trafficCurrent(state),
     traffic = device.traffic,
     rows: Array<readonly [string, string]> = [
       [t('Address'), device.address],
-      [t('Presence'), presence === 'online' ? t('Seen in the scan') : presence === 'away' ? t('Not seen in the scan') : t('Unknown')],
+      [t('Presence'), presenceLabel(presence)],
       [t('Last seen'), date(device.lastSeen)],
       [t('Type'), sentenceCase(device.role || device.kind) || t('Unidentified')],
       [t('Connection (router)'), traffic ? CONNECTION_NAMES[traffic.connection] : t('Unidentified')],
       [t('Download'), isCurrent && traffic ? t('{0} Mbps', mbps(traffic.downloadRouterMbps)) : NOT_CURRENT],
       [t('Upload'), isCurrent && traffic ? t('{0} Mbps', mbps(traffic.uploadRouterMbps)) : NOT_CURRENT],
     ];
-  if (traffic?.port) rows.push([t('Router port'), `LAN ${traffic.port}`]);
+  if (traffic !== null && Boolean(traffic.port)) rows.push([t('Router port'), `LAN ${traffic.port}`]);
   if (isCurrent && traffic?.band) rows.push([t('Wi-Fi band'), bandName(traffic.band)], [t('Signal'), signalText(traffic.signalDbm)]);
   if (device.isNew) rows.push([t('New device'), t('First seen in the last 24 hours')]);
   return rows.map(([title, value]) => ({ kind: 'value', title, value }));

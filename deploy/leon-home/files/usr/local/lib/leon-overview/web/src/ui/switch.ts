@@ -1,4 +1,5 @@
 import { h } from '../core/dom.js';
+import { t } from '../i18n/index.js';
 
 export type SwitchState = 'idle' | 'pending' | 'refused' | 'unverified';
 /** cancelled: the user backed out of a confirmation; nothing was requested, so no warning is shown. */
@@ -26,6 +27,11 @@ export function createSwitch({ label, checked, onChange, isDisabled = false }: S
     state: SwitchState = 'idle';
   const element = h('button', { className: 'switch', attrs: { 'type': 'button', 'role': 'switch', 'aria-label': label } }, [h('span', { className: 'switch-thumb' })]);
   function paint(shown: boolean | null): void {
+    // ARIA switches have only on/off states; an unavailable reading is a disabled mixed checkbox.
+    element.setAttribute('role', shown === null ? 'checkbox' : 'switch');
+    element.disabled = isDisabled || shown === null;
+    if (shown === null) element.setAttribute('aria-description', t('No reading'));
+    else element.removeAttribute('aria-description');
     element.setAttribute('aria-checked', shown === null ? 'mixed' : String(shown));
     element.dataset.state = state;
   }
@@ -46,7 +52,6 @@ export function createSwitch({ label, checked, onChange, isDisabled = false }: S
     state = outcome === 'applied' || outcome === 'cancelled' ? 'idle' : outcome;
     paint(current);
   }
-  element.disabled = isDisabled;
   element.addEventListener('click', () => void toggle());
   paint(current);
   return {

@@ -73,7 +73,7 @@ def start_panel():
         ),
         env=environment,
         stdout=subprocess.DEVNULL,
-        stderr=open('/tmp/panel.log', 'ab'),
+        stderr=tempfile.TemporaryFile(mode='w+b'),
         cwd='/',
     )
 
@@ -161,21 +161,26 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
         path = pathlib.Path('/test-bin') / name
         path.write_text(proxy)
         path.chmod(0o755)
-    subprocess.run(['ip', 'link', 'add', 'eth0', 'type', 'dummy'], check=True)
-    subprocess.run(['ip', 'address', 'add', '10.77.0.2/24', 'dev', 'eth0'], check=True)
-    subprocess.run(['ip', 'link', 'set', 'eth0', 'up'], check=True)
+    # Fixed executable in the disposable container PATH, including test stubs.
+    subprocess.run(['ip', 'link', 'add', 'eth0', 'type', 'dummy'], check=True)  # noqa: S607
+    # Fixed executable in the disposable container PATH, including test stubs.
+    subprocess.run(['ip', 'address', 'add', '10.77.0.2/24', 'dev', 'eth0'], check=True)  # noqa: S607
+    # Fixed executable in the disposable container PATH, including test stubs.
+    subprocess.run(['ip', 'link', 'set', 'eth0', 'up'], check=True)  # noqa: S607
     manager = socketserver.ThreadingUnixStreamServer(MANAGER, Manager)
     os.chmod(MANAGER, 0o600)
     threading.Thread(target=manager.serve_forever, daemon=True).start()
     work = pathlib.Path(tempfile.mkdtemp())
     key, public = work / 'private.pem', work / 'public.pem'
     subprocess.run(
-        ['openssl', 'genpkey', '-algorithm', 'ED25519', '-out', str(key)],
+        # Fixed executable in the disposable container PATH, including test stubs.
+        ['openssl', 'genpkey', '-algorithm', 'ED25519', '-out', str(key)],  # noqa: S607
         check=True,
         capture_output=True,
     )
     subprocess.run(
-        ['openssl', 'pkey', '-in', str(key), '-pubout', '-out', str(public)],
+        # Fixed executable in the disposable container PATH, including test stubs.
+        ['openssl', 'pkey', '-in', str(key), '-pubout', '-out', str(public)],  # noqa: S607
         check=True,
         capture_output=True,
     )
@@ -184,7 +189,8 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
         path = work / version
         build(path, version, sequence, ['Integration test.'])
         subprocess.run(
-            [
+            # Fixed executable in the disposable container PATH, including test stubs.
+            [  # noqa: S607
                 'openssl',
                 'pkeyutl',
                 '-sign',
@@ -207,7 +213,8 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
     with tarfile.open(first / 'bootstrap.tar.gz') as archive:
         archive.extractall(bootstrap, filter='data')
     der = subprocess.run(
-        ['openssl', 'pkey', '-pubin', '-in', str(public), '-outform', 'DER'],
+        # Fixed executable in the disposable container PATH, including test stubs.
+        ['openssl', 'pkey', '-pubin', '-in', str(public), '-outform', 'DER'],  # noqa: S607
         check=True,
         capture_output=True,
     ).stdout
@@ -254,7 +261,7 @@ with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
         ),
         cwd='/',
         stdout=subprocess.DEVNULL,
-        stderr=open('/tmp/broker.log', 'wb'),
+        stderr=tempfile.TemporaryFile(mode='w+b'),
     )
     processes['broker'] = broker
     try:
@@ -318,7 +325,8 @@ def maintenance(bundle, public, fingerprint, bootstrap):
     cleanup.unlink()  # simulate an older base without this policy
     install.maintain(bundle, public, fingerprint, bootstrap)
     apt_config = subprocess.run(
-        ['apt-config', 'shell', 'interval', 'APT::Periodic::AutocleanInterval'],
+        # Fixed executable in the disposable container PATH, including test stubs.
+        ['apt-config', 'shell', 'interval', 'APT::Periodic::AutocleanInterval'],  # noqa: S607
         check=True,
         capture_output=True,
         text=True,
@@ -349,6 +357,7 @@ def maintenance(bundle, public, fingerprint, bootstrap):
         command[:3] == ['systemctl', 'enable', '--now'] and 'leon-router.service' in command
         for command in log
     )
+    assert ['systemctl', 'restart', 'leon-router.service'] in log
     router = pwd.getpwnam('leon-router')
     for directory in ('/run/leon-router', '/var/lib/leon-router'):
         path = pathlib.Path(directory)
@@ -370,7 +379,7 @@ def maintenance(bundle, public, fingerprint, bootstrap):
         },
         cwd='/',
         stdout=subprocess.DEVNULL,
-        stderr=open('/tmp/router.log', 'wb'),
+        stderr=tempfile.TemporaryFile(mode='w+b'),
     )
     for _ in range(50):
         if pathlib.Path('/run/leon-router/unlock.sock').exists():
@@ -383,12 +392,13 @@ def maintenance(bundle, public, fingerprint, bootstrap):
     reply = panel_request('/network-map/unlock', {'phrase': 'any phrase'}, token)
     assert reply == {'status': 'notConfigured'}, reply
     # One real phone attempt per minute, setup included; nothing is written without a router login.
-    setup = {'phrase': 'a new long passphrase', 'password': 'router password'}
+    setup = {'password': 'router password'}
     reply = panel_request('/network-map/unlock', setup, token)
     assert reply == {'status': 'unlockFailed'}, reply  # the container has no network gateway
     reply = panel_request('/network-map/unlock', setup, token)
     assert reply == {'status': 'busy'}, reply
-    assert not pathlib.Path('/var/lib/leon-router/router.age').exists()
+    assert not list(pathlib.Path('/var/lib/leon-router').glob('*.age'))
+    assert not pathlib.Path('/var/lib/leon-router/auto-unlock.key').exists()
     reach = (
         "import socket; s=socket.socket(socket.AF_UNIX);s.connect('/run/leon-router/unlock.sock')"
     )

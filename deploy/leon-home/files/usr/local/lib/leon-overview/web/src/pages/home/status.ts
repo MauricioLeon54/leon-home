@@ -17,8 +17,8 @@ export function statusSection(view: HomeView, context: HomeContext): HTMLElement
   const { status } = view,
     hasIssues = status.issues.length > 0,
     facts = [
-      status.uptimeSeconds ? t('Up {0}', duration(status.uptimeSeconds)) : null,
-      status.servicesTotal ? t('{0} of {1} services running', count(status.servicesRunning), count(status.servicesTotal)) : null,
+      Boolean(status.uptimeSeconds) ? t('Up {0}', duration(status.uptimeSeconds)) : null,
+      Boolean(status.servicesTotal) ? t('{0} of {1} services running', count(status.servicesRunning), count(status.servicesTotal)) : null,
       status.temperatureCelsius === null ? null : `${Math.round(status.temperatureCelsius)} °C`,
       context.observedAt === null ? null : `${context.isStale ? t('Earlier') : t('Updated')} ${clock(context.observedAt)}`,
     ].filter((fact): fact is string => fact !== null);

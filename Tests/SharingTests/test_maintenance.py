@@ -1,3 +1,4 @@
+import contextlib
 import json
 import pathlib
 import sys
@@ -54,20 +55,54 @@ class MaintenanceTests(unittest.TestCase):
     def test_never_rotates_the_trusted_key(self):
         other = self.config / 'other.pem'
         other.write_bytes(b'untrusted')
-        with patch.object(install.os, 'geteuid', return_value=0):
-            with self.assertRaisesRegex(ReleaseError, 'invalidSignature'):
-                install.maintain(self.root, other, 'f' * 64, self.root)
+        with (
+            patch.object(install.os, 'geteuid', return_value=0),
+            self.assertRaisesRegex(ReleaseError, 'invalidSignature'),
+        ):
+            install.maintain(self.root, other, 'f' * 64, self.root)
 
     def test_refuses_an_unfinished_initial_setup(self):
         (self.config / 'installing.json').write_text('{}')
-        with patch.object(install.os, 'geteuid', return_value=0):
-            with self.assertRaisesRegex(ReleaseError, 'setupIncomplete'):
-                install.maintain(self.root, self.config / 'release-key.pem', 'f' * 64, self.root)
+        with (
+            patch.object(install.os, 'geteuid', return_value=0),
+            self.assertRaisesRegex(ReleaseError, 'setupIncomplete'),
+        ):
+            install.maintain(self.root, self.config / 'release-key.pem', 'f' * 64, self.root)
+
+    def test_resumed_base_update_restarts_router_after_reloading_the_unit(self):
+        from leon_home import activation
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(install.os, 'geteuid', return_value=0))
+            stack.enter_context(patch.object(install, 'verified_bundle', return_value=CANDIDATE))
+            stack.enter_context(patch.object(install, 'base_pending', return_value=True))
+            stack.enter_context(patch.object(install.shutil, 'which', return_value='/usr/bin/age'))
+            stack.enter_context(patch.object(install, 'read_json', return_value={}))
+            stack.enter_context(patch.object(install.Site, 'parse'))
+            stack.enter_context(patch.object(activation, 'STATE', self.config))
+            for name in (
+                'router_base',
+                'write_runtime',
+                'write_units',
+                'self_heal_base',
+                'write',
+                'login_summary',
+            ):
+                stack.enter_context(patch.object(install, name))
+            run = stack.enter_context(patch.object(install, 'run'))
+            install.maintain(self.root, self.config / 'release-key.pem', 'f' * 64, self.root)
+        calls = run.call_args_list
+        self.assertLess(
+            calls.index(unittest.mock.call('systemctl', 'daemon-reload')),
+            calls.index(unittest.mock.call('systemctl', 'restart', 'leon-router.service')),
+        )
 
     def test_requires_root(self):
-        with patch.object(install.os, 'geteuid', return_value=1000):
-            with self.assertRaisesRegex(ReleaseError, 'rootRequired'):
-                install.maintain(self.root, self.config / 'release-key.pem', 'f' * 64, self.root)
+        with (
+            patch.object(install.os, 'geteuid', return_value=1000),
+            self.assertRaisesRegex(ReleaseError, 'rootRequired'),
+        ):
+            install.maintain(self.root, self.config / 'release-key.pem', 'f' * 64, self.root)
 
 
 if __name__ == '__main__':

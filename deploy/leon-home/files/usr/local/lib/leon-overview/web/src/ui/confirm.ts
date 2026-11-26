@@ -31,10 +31,10 @@ export function confirm({ title, message, confirmLabel, tone = 'default', phrase
               className: 'confirm-input',
               attrs: { 'type': 'text', 'autocomplete': 'off', 'autocapitalize': 'off', 'spellcheck': 'false', 'aria-label': t('Type {0} to confirm', phrase) },
               on: {
-                input: () => {
+                input() {
                   confirmButton.disabled = input?.value.trim() !== phrase;
                 },
-                keydown: event => {
+                keydown(event) {
                   if (event.key === 'Enter' && !confirmButton.disabled) settle(true);
                 },
               },

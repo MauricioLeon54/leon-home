@@ -113,6 +113,8 @@ function router(value: unknown, now: number): RouterTelemetry {
   if (ports && new Set(ports.map(port => port.port)).size !== ports.length) throw new Error('Duplicate port identity');
   return {
     status: choice(item.status, ['current', 'locked', 'error', 'stale', 'unavailable'], 'unavailable'),
+    unlockBy: choice(item.unlockBy, ['phrase', 'password'], 'phrase'),
+    isReconnecting: item.isReconnecting === true,
     observedAt: timestamp(item.observedAt, now),
     ports,
     controllablePorts: optionalList(item.controllablePorts, 8).map(value => integer(value, 1, 8)),

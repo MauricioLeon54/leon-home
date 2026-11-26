@@ -11,16 +11,24 @@ export interface Poller {
 export interface PollOptions<T> {
   load: (signal: AbortSignal) => Promise<T>;
   intervalMs: number;
+  loadImmediately?: boolean;
   onData: (value: T) => void;
   /** Called after each failure with the time of the last success (ms) so pages can mark staleness. */
   onFailure: (error: HttpError | Error, lastSuccessMs: number | null) => void;
 }
 
 /** Visibility-aware refresh: pauses while hidden, aborts in-flight reads when hidden or stopped. */
-export function poll<T>({ load, intervalMs, onData, onFailure }: PollOptions<T>): Poller {
+export function poll<T>({ load, intervalMs, onData, onFailure, loadImmediately = true }: PollOptions<T>): Poller {
   let controller: AbortController | null = null,
     lastSuccess: number | null = null,
-    stopped = false;
+    stopped = false,
+    resumePending = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  function schedule(): void {
+    clearTimeout(timer);
+    if (!stopped && !document.hidden) timer = setTimeout(() => void refresh(), intervalMs);
+  }
 
   async function refresh(): Promise<void> {
     if (stopped || controller || document.visibilityState !== 'visible') return;
@@ -36,20 +44,28 @@ export function poll<T>({ load, intervalMs, onData, onFailure }: PollOptions<T>)
       onFailure(error instanceof Error ? error : new Error('Unknown failure', { cause: error }), lastSuccess);
     } finally {
       if (controller === current) controller = null;
+      if (resumePending && !document.hidden) {
+        resumePending = false;
+        void refresh();
+      } else schedule();
     }
   }
   function onVisibility(): void {
-    if (document.hidden) controller?.abort();
+    clearTimeout(timer);
+    if (document.hidden) {
+      resumePending = false;
+      controller?.abort();
+    } else if (controller?.signal.aborted === true) resumePending = true;
     else void refresh();
   }
-  const timer = setInterval(() => void refresh(), intervalMs);
   document.addEventListener('visibilitychange', onVisibility);
-  void refresh();
+  if (loadImmediately) void refresh();
+  else schedule();
   return {
     refresh,
     stop() {
       stopped = true;
-      clearInterval(timer);
+      clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
       controller?.abort();
     },

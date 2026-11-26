@@ -1,4 +1,4 @@
-import type { Feedback } from '../../contracts.js';
+import type { Feedback, RouterTelemetry } from '../../contracts.js';
 import { type Child, h } from '../../core/dom.js';
 import { t } from '../../i18n/index.js';
 import { feedbackFor } from '../../presentation.js';
@@ -10,76 +10,80 @@ const OUTCOMES = {
   current: ['good', t('Ready. The router session is active.')],
   unlockFailed: ['warn', t('Incorrect passphrase or no router response. Try again in one minute.')],
   busy: ['warn', t('Wait one minute between attempts.')],
-  notConfigured: ['warn', t('Connect your router once: choose a new passphrase, repeat it and enter the router administrator password.')],
-  alreadyConfigured: ['warn', t('This Pi already has a router vault. Unlock it with its passphrase.')],
+  notConfigured: ['warn', t('Ask your support person to connect the router.')],
   setupUnavailable: ['warn', t('Ask your support person to connect the router.')],
-  mismatch: ['warn', t('The two passphrases do not match.')],
-  weak: ['warn', t('Use a passphrase of at least 12 characters.')],
   forbidden: ['warn', t('Your page session expired. Reload to continue.')],
   unavailable: ['warn', t('The router monitor is not responding.')],
-  invalid: ['warn', t('Invalid passphrase.')],
+  invalid: ['warn', t('Invalid request.')],
   network: ['warn', t('LEÓN Home could not be reached.')],
 } satisfies Record<string, Feedback>;
 
-/** Survives repaints: whether the form is in connect-router mode and the last outcome shown. */
+/** Survives repaints: the last outcome shown and whether the "router changed" form is open. */
 export interface UnlockState {
-  isConnecting: boolean;
   feedback: Feedback | null;
+  isOpen: boolean;
 }
 export interface UnlockProps {
   state: UnlockState;
+  unlockBy: RouterTelemetry['unlockBy'];
+  isReconnecting: boolean;
   explanation: string;
   token: string;
   /** Runs the submit under the page's action hold, then refreshes. */
   run: <R>(work: () => Promise<R>) => Promise<R>;
 }
 
-function passwordInput(label: string, autocomplete: string, isHidden: boolean): HTMLInputElement {
-  const input = h('input', { attrs: { 'type': 'password', autocomplete, 'maxlength': '1024', 'placeholder': label, 'aria-label': label, 'enterkeyhint': 'go' }, className: 'text-input' });
-  input.hidden = isHidden;
-  input.required = !isHidden;
-  return input;
-}
-
-/** The locked-router section. One attempt per submit, never retried; every password field is cleared whatever the outcome. */
-export function unlockSection({ state, explanation, token, run }: UnlockProps): HTMLElement {
-  const isSetup = state.isConnecting,
-    passphrase = passwordInput(isSetup ? t('New LEÓN vault passphrase') : t('LEÓN vault passphrase'), 'current-password', false),
-    repeat = passwordInput(t('Repeat the new passphrase'), 'new-password', !isSetup),
-    routerPassword = passwordInput(t('Router administrator password'), 'off', !isSetup),
+/** The locked-router section. One attempt per submit, never retried; the field is cleared whatever the outcome. */
+export function unlockSection({ state, unlockBy, isReconnecting, explanation, token, run }: UnlockProps): HTMLElement {
+  const isPhrase = unlockBy === 'phrase',
+    label = isPhrase ? t('LEÓN vault passphrase') : t('Router administrator password'),
+    submitLabel = isPhrase ? t('Unlock') : t('Connect router'),
+    secret = h('input', {
+      className: 'text-input',
+      attrs: { 'type': 'password', 'autocomplete': 'current-password', 'maxlength': '1024', 'placeholder': label, 'aria-label': label, 'enterkeyhint': 'go' },
+    }),
     status = h('p', {
       className: `note${state.feedback ? ` is-${state.feedback[0]}` : ''}`,
       attrs: { role: 'status' },
-      text: state.feedback?.[1] ?? t('Use the passphrase for this installation. Ask your support person to configure router monitoring.'),
+      text:
+        state.feedback?.[1] ??
+        (isPhrase
+          ? t('Use the passphrase for this installation. Ask your support person to configure router monitoring.')
+          : t('It is the password you use to open the router settings. LEÓN never shows it.')),
     }),
-    submit = button({ label: isSetup ? t('Connect router') : t('Unlock'), variant: 'primary', onPress: () => {} });
+    submit = button({ label: submitLabel, variant: 'primary', onPress() {} });
+  secret.required = true;
   submit.type = 'submit';
-  // A hidden username lets the password manager offer the saved passphrase.
+  // A hidden username lets the password manager offer the saved entry.
   const username = h('input', {
     className: 'sr',
-    attrs: { 'type': 'text', 'name': 'username', 'autocomplete': 'username', 'value': 'leon-vault', 'readonly': '', 'tabindex': '-1', 'aria-hidden': 'true' },
+    attrs: { 'type': 'text', 'name': 'username', 'autocomplete': 'username', 'value': isPhrase ? 'leon-vault' : 'leon-router', 'readonly': '', 'tabindex': '-1', 'aria-hidden': 'true' },
   });
   async function attempt(): Promise<void> {
-    let result: string;
-    if (isSetup && passphrase.value !== repeat.value) result = 'mismatch';
-    else if (isSetup && new TextEncoder().encode(passphrase.value).length < 12) result = 'weak';
-    else {
-      const body = isSetup ? { phrase: passphrase.value, password: routerPassword.value } : { phrase: passphrase.value };
-      result = await sendNetworkAction('/api/v1/network/unlock', body, token);
-    }
-    passphrase.value = repeat.value = routerPassword.value = '';
-    state.isConnecting = result === 'notConfigured' || (isSetup && result !== 'current' && result !== 'alreadyConfigured');
-    state.feedback = feedbackFor(OUTCOMES, result, 'unlockFailed');
+    const body = isPhrase ? { phrase: secret.value } : { password: secret.value };
+    const result = await sendNetworkAction('/api/v1/network/unlock', body, token);
+    secret.value = '';
+    state.feedback =
+      result === 'unlockFailed' && !isPhrase
+        ? ['warn', t('The router did not accept that password or did not respond. Check it and try again in one minute.')]
+        : feedbackFor(OUTCOMES, result, 'unlockFailed');
   }
-  const form = h('form', { className: 'unlock-form', attrs: { autocomplete: 'on' } }, [username, passphrase, repeat, routerPassword, submit] satisfies Array<Child>);
+  const form = h('form', { className: 'unlock-form', attrs: { autocomplete: 'on' } }, [username, secret, submit] satisfies Array<Child>);
   form.addEventListener('submit', event => {
     event.preventDefault();
     submit.disabled = true;
-    submit.textContent = isSetup ? t('Connecting…') : t('Decrypting…');
+    submit.textContent = t('Connecting…');
     void run(attempt);
   });
-  return h('section', { className: 'group unlock' }, [
-    h('div', { className: 'group-head' }, [h('h2', { className: 'group-title', text: t('Router readings are locked') })]),
-    card([h('p', { className: 'note', text: explanation }), form, status]),
-  ]);
+  const group = (title: string, children: Array<Child>): HTMLElement =>
+    h('section', { className: 'group unlock' }, [h('div', { className: 'group-head' }, [h('h2', { className: 'group-title', text: title })]), card(children)]);
+  if (isReconnecting) {
+    const changed = h('details', {}, [h('summary', { text: t('The router or its password changed') }), form, status]);
+    changed.open = state.isOpen;
+    changed.addEventListener('toggle', () => {
+      state.isOpen = changed.open;
+    });
+    return group(t('Reconnecting to your router'), [h('p', { className: 'note', text: t('LEÓN is reconnecting by itself. You do not need to do anything.') }), changed]);
+  }
+  return group(isPhrase ? t('Router readings are locked') : t('Connect your router'), [h('p', { className: 'note', text: explanation }), form, status]);
 }

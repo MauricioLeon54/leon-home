@@ -44,7 +44,7 @@ export function legacyTarget(url: URL): string | null {
     const view = url.hash.slice(1);
     return NETWORK_VIEWS.has(view) && view !== 'map' ? `/network?view=${view}` : '/network';
   }
-  if (url.pathname === '/automation') return '/storage/automation' + url.search;
+  if (url.pathname === '/automation') return `/storage/automation${url.search}`;
   if (url.pathname === '/index.html') return '/';
   return null;
 }

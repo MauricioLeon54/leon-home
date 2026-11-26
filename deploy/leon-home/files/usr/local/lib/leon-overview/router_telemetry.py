@@ -154,6 +154,8 @@ def clean(value, now):
             'controllablePorts': [],
             'wifiFilter': None,
             'wifi': None,
+            'unlockBy': 'phrase',
+            'isReconnecting': False,
         }
     observed = value.get('observedAt')
     valid_date = (
@@ -174,7 +176,7 @@ def clean(value, now):
         except (ValueError, TypeError):
             continue
 
-        def rate(name):
+        def rate(name, row=row):
             rate = row.get(name)
             return (
                 rate if status == 'current' and row.get('active') is True and finite(rate) else None
@@ -214,6 +216,9 @@ def clean(value, now):
         'ports': clean_ports(value.get('ports')) if status == 'current' else None,
         'wifiFilter': clean_filter(value.get('wifiFilter')) if status == 'current' else None,
         'wifi': clean_wifi(value.get('wifi')) if status == 'current' else None,
+        # A monitor without these fields asks for its phrase.
+        'unlockBy': 'password' if value.get('unlockBy') == 'password' else 'phrase',
+        'isReconnecting': value.get('isReconnecting') is True,
         'controllablePorts': sorted(
             {
                 port

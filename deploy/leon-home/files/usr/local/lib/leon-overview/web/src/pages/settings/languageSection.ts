@@ -8,9 +8,11 @@ import { showToast } from '../../ui/toast.js';
 export function languageSection(): HTMLElement {
   const picker = createSegmented<Language>({
     label: t('Language'),
-    options: (Object.keys(LANGUAGES) as Array<Language>).map(value => ({ value, label: LANGUAGES[value] })),
+    options: Object.entries(LANGUAGES)
+      .filter((entry): entry is [Language, (typeof LANGUAGES)[Language]] => entry[0] === 'en' || entry[0] === 'es')
+      .map(([value, label]) => ({ value, label })),
     value: language,
-    onChange: next => {
+    onChange(next) {
       if (setLanguage(next)) return;
       picker.setValue(language);
       showToast('refused', t('This device cannot save the language'));

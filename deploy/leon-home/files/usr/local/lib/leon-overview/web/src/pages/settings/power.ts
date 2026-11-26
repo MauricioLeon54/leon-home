@@ -14,7 +14,7 @@ async function restartService(io: HardwareIO, service: Service): Promise<void> {
   const isRouter = service.unit === 'leon-router',
     isConfirmed = await confirm({
       title: t('Restart {0}?', serverText(service.label)),
-      message: isRouter ? t('Router readings stay locked until you unlock them again.') : t('{0} is unavailable for a few seconds.', serverText(service.label)),
+      message: isRouter ? t('Router readings pause for a moment. If they stay locked, open Network.') : t('{0} is unavailable for a few seconds.', serverText(service.label)),
       confirmLabel: t('Restart'),
     });
   if (isConfirmed) await io.act('/api/v1/hardware/restart-service', { unit: service.unit });

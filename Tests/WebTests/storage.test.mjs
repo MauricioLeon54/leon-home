@@ -65,6 +65,13 @@ function automationView(failuresOnly) {
   };
 }
 
+function passwordReply(handlers) {
+  return handlers.password ? handlers.password() : [{ status: 'shown', message: '', password: 'synthetic pass' }];
+}
+function settingsReply(handlers, count) {
+  return handlers.answer ? handlers.answer(count) : { status: 'saved', message: 'Connection saved' };
+}
+
 async function start(browserType, handlers = {}) {
   const browser = await browserType.launch();
   const context = await browser.newContext({ serviceWorkers: 'block', reducedMotion: 'reduce', viewport: { width: 390, height: 844 } });
@@ -96,11 +103,11 @@ async function start(browserType, handlers = {}) {
     if (pathname === '/leon/v1/automation') return json(automationView(url.searchParams.get('status') === 'failed'));
     if (pathname === '/leon/v1/storage/password') {
       posts.push({ token: request.headers()['x-leon-token'], body: request.postDataJSON() });
-      return handlers.password ? json(...handlers.password()) : json({ status: 'shown', message: '', password: 'synthetic pass' });
+      return json(...passwordReply(handlers));
     }
     if (pathname === '/leon/v1/automation/settings') {
       posts.push({ token: request.headers()['x-leon-token'], contentType: request.headers()['content-type'], body: request.postDataJSON() });
-      return json(handlers.answer ? handlers.answer(posts.length) : { status: 'saved', message: 'Connection saved' });
+      return json(settingsReply(handlers, posts.length));
     }
     if (pathname.startsWith('/assets/')) {
       const name = pathname.slice('/assets/'.length);
@@ -126,83 +133,79 @@ const locationOf = page => {
 };
 const title = page => page.locator('.large-title').textContent();
 
+function appTest(browserType, name, verify, options) {
+  test(name, async () => {
+    const app = await start(browserType, options);
+    try {
+      await verify(app);
+    } finally {
+      await app.close();
+    }
+  });
+}
+
 for (const browserType of [chromium, webkit]) {
-  test(`${browserType.name()} storage page shows the drive meter, connections and folders`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/storage');
-      await app.page.getByText('Family drive').waitFor();
-      const meter = app.page.getByRole('meter', { name: 'Space used' });
-      assert.equal(await meter.getAttribute('aria-valuenow'), '61');
-      assert.equal(await app.page.locator('.drive-space').textContent(), '400 GB free of 1 TB');
-      assert.equal(await app.page.locator('.drive-facts').textContent(), 'FAMILY · exfat · Read and write');
-      assert.equal(await app.page.getByRole('link', { name: 'Browse files' }).getAttribute('href'), '/storage/files');
-      assert.equal(await app.page.getByRole('link', { name: 'Open in Files or Finder' }).first().getAttribute('href'), 'smb://100.64.0.7/Family');
-      assert.equal(await app.page.getByText('Grandma drive').count(), 1);
-      assert.equal(await app.page.locator('code.address').count(), 2);
-      assert.equal(await app.page.getByText('LEÓN TV').count(), 1);
-      assert.match(await app.page.locator('.row', { hasText: 'Family' }).filter({ hasText: 'Folder present' }).first().textContent(), /\/srv\/storage\/Family · Folder present/);
-      assert.equal(await app.page.getByText('Backup disk').count(), 1);
-      assert.equal(await app.page.getByRole('link', { name: /^Automation/ }).getAttribute('href'), '/storage/automation');
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} storage page shows the drive meter, connections and folders`, async app => {
+    await app.page.goto('https://leon.test/storage');
+    await app.page.getByText('Family drive').waitFor();
+    const meter = app.page.getByRole('meter', { name: 'Space used' });
+    assert.equal(await meter.getAttribute('aria-valuenow'), '61');
+    assert.equal(await app.page.locator('.drive-space').textContent(), '400 GB free of 1 TB');
+    assert.equal(await app.page.locator('.drive-facts').textContent(), 'FAMILY · exfat · Read and write');
+    assert.equal(await app.page.getByRole('link', { name: 'Browse files' }).getAttribute('href'), '/storage/files');
+    assert.equal(await app.page.getByRole('link', { name: 'Open in Files or Finder' }).first().getAttribute('href'), 'smb://100.64.0.7/Family');
+    assert.equal(await app.page.getByText('Grandma drive').count(), 1);
+    assert.equal(await app.page.locator('code.address').count(), 2);
+    assert.equal(await app.page.getByText('LEÓN TV').count(), 1);
+    assert.match(await app.page.locator('.row', { hasText: 'Family' }).filter({ hasText: 'Folder present' }).first().textContent(), /\/srv\/storage\/Family · Folder present/);
+    assert.equal(await app.page.getByText('Backup disk').count(), 1);
+    assert.equal(await app.page.getByRole('link', { name: /^Automation/ }).getAttribute('href'), '/storage/automation');
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} copy buttons write the address and confirm with a toast`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/storage');
-      await app.page.getByRole('button', { name: 'Copy the Anywhere with Tailscale address' }).click();
-      await app.page.locator('.toast.is-applied', { hasText: 'Address copied' }).waitFor();
-      assert.deepEqual(await app.page.evaluate(() => globalThis.copied), ['smb://100.64.0.7/Family']);
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} copy buttons write the address and confirm with a toast`, async app => {
+    await app.page.goto('https://leon.test/storage');
+    await app.page.getByRole('button', { name: 'Copy the Anywhere with Tailscale address' }).click();
+    await app.page.locator('.toast.is-applied', { hasText: 'Address copied' }).waitFor();
+    assert.deepEqual(await app.page.evaluate(() => globalThis.copied), ['smb://100.64.0.7/Family']);
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} the guide shows steps per device and a password only on request`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/storage');
-      await app.page.getByRole('link', { name: /^How to connect/ }).click();
-      await app.page.getByText('Connect to Server').first().waitFor();
-      assert.equal(locationOf(app.page), '/storage/guide');
-      assert.equal(await app.page.getByText('synthetic pass').count(), 0);
-      assert.equal(await app.page.getByText('You can watch, add and delete files.').count(), 1);
-      assert.equal(await app.page.getByText('Ask the person who set up LEÓN Home for your user and password.').count(), 1);
-      await app.page.getByRole('button', { name: 'Show the password for Family drive' }).click();
-      await app.page.getByText('synthetic pass').waitFor();
-      assert.deepEqual(app.posts, [{ token: 'token-fixture', body: { drive: 'Family drive', user: 'family_nas' } }]);
-      await app.page.getByRole('button', { name: 'Copy the password for Family drive' }).click();
-      assert.deepEqual(await app.page.evaluate(() => globalThis.copied), ['synthetic pass']);
-      await app.page.clock.runFor(61_000);
-      await app.page.getByRole('button', { name: 'Show the password for Family drive' }).waitFor();
-      assert.equal(await app.page.getByText('synthetic pass').count(), 0);
-      await app.page.getByRole('radio', { name: 'Windows' }).click();
-      await app.page.getByText(String.raw`\\100.64.0.9\Family`).waitFor();
-      await app.page.getByRole('radio', { name: 'TV' }).click();
-      await app.page.getByText('Choose “LEÓN TV”.').waitFor();
-      assert.equal(await app.page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} the guide shows steps per device and a password only on request`, async app => {
+    await app.page.goto('https://leon.test/storage');
+    await app.page.getByRole('link', { name: /^How to connect/ }).click();
+    await app.page.getByText('Connect to Server').first().waitFor();
+    assert.equal(locationOf(app.page), '/storage/guide');
+    assert.equal(await app.page.getByText('synthetic pass').count(), 0);
+    assert.equal(await app.page.getByText('You can watch, add and delete files.').count(), 1);
+    assert.equal(await app.page.getByText('Ask the person who set up LEÓN Home for your user and password.').count(), 1);
+    await app.page.getByRole('button', { name: 'Show the password for Family drive' }).click();
+    await app.page.getByText('synthetic pass').waitFor();
+    assert.deepEqual(app.posts, [{ token: 'token-fixture', body: { drive: 'Family drive', user: 'family_nas' } }]);
+    await app.page.getByRole('button', { name: 'Copy the password for Family drive' }).click();
+    assert.deepEqual(await app.page.evaluate(() => globalThis.copied), ['synthetic pass']);
+    await app.page.clock.runFor(61_000);
+    await app.page.getByRole('button', { name: 'Show the password for Family drive' }).waitFor();
+    assert.equal(await app.page.getByText('synthetic pass').count(), 0);
+    await app.page.getByRole('radio', { name: 'Windows' }).click();
+    await app.page.getByText(String.raw`\\100.64.0.9\Family`).waitFor();
+    await app.page.getByRole('radio', { name: 'TV' }).click();
+    await app.page.getByText('Choose “LEÓN TV”.').waitFor();
+    assert.equal(await app.page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} an older server without accounts still opens the guide`, async () => {
-    const app = await start(browserType, { storage: () => storageView({ accounts: undefined }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} an older server without accounts still opens the guide`,
+    async app => {
       await app.page.goto('https://leon.test/storage/guide');
       await app.page.getByText('Ask the person who set up LEÓN Home for your user and password.').first().waitFor();
       assert.equal(await app.page.getByText('Add a movie').count(), 0);
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
+    },
+    { storage: () => storageView({ accounts: undefined }) }
+  );
 
   test(`${browserType.name()} unknown capacity shows no meter and a missing drive hides browsing`, async () => {
     const view = storageView({
@@ -225,127 +228,103 @@ for (const browserType of [chromium, webkit]) {
     }
   });
 
-  test(`${browserType.name()} malformed storage JSON shows an error state`, async () => {
-    const app = await start(browserType, { storage: () => ({ drive: 'nope' }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} malformed storage JSON shows an error state`,
+    async app => {
       await app.page.goto('https://leon.test/storage');
       await app.page.getByText('LEÓN Home is not answering').waitFor();
       assert.equal(await app.page.locator('.tabbar').isVisible(), true);
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
+    },
+    { storage: () => ({ drive: 'nope' }) }
+  );
 
-  test(`${browserType.name()} a peer URL outside the smb:// pattern is rejected`, async () => {
-    const app = await start(browserType, { storage: () => storageView({ peers: [{ name: 'Evil', url: 'javascript:alert(1)' }] }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} a peer URL outside the smb:// pattern is rejected`,
+    async app => {
       await app.page.goto('https://leon.test/storage');
       await app.page.getByText('LEÓN Home is not answering').waitFor();
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+    },
+    { storage: () => storageView({ peers: [{ name: 'Evil', url: 'javascript:alert(1)' }] }) }
+  );
+
+  appTest(browserType, `${browserType.name()} folders push as pages and Back restores titles and scroll`, async app => {
+    await app.page.goto('https://leon.test/storage/files');
+    await app.page.getByRole('link', { name: /^Movies/ }).click();
+    await app.page.getByRole('link', { name: /^Action/ }).waitFor();
+    assert.equal(locationOf(app.page), '/storage/files?path=Movies');
+    assert.equal(await title(app.page), 'Movies');
+    await app.page.evaluate(() => globalThis.scrollTo(0, globalThis.document.documentElement.scrollHeight));
+    const scrolled = await app.page.evaluate(() => globalThis.scrollY);
+    assert.ok(scrolled > 500);
+    await app.page.getByRole('link', { name: /^Action/ }).click();
+    await app.page.getByText('chase.mkv').waitFor();
+    assert.equal(locationOf(app.page), '/storage/files?path=Movies%2FAction');
+    assert.equal(await title(app.page), 'Action');
+    await app.page.locator('.nav-back').click();
+    await app.page.getByRole('link', { name: /^Action/ }).waitFor();
+    assert.equal(await title(app.page), 'Movies');
+    assert.equal(await app.page.evaluate(() => globalThis.scrollY), scrolled);
+    await app.page.locator('.nav-back').click();
+    await app.page.getByText('notes.pdf').waitFor();
+    assert.equal(await title(app.page), 'Drive');
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} folders push as pages and Back restores titles and scroll`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/storage/files');
-      await app.page.getByRole('link', { name: /^Movies/ }).click();
-      await app.page.getByRole('link', { name: /^Action/ }).waitFor();
-      assert.equal(locationOf(app.page), '/storage/files?path=Movies');
-      assert.equal(await title(app.page), 'Movies');
-      await app.page.evaluate(() => globalThis.scrollTo(0, globalThis.document.documentElement.scrollHeight));
-      const scrolled = await app.page.evaluate(() => globalThis.scrollY);
-      assert.ok(scrolled > 500);
-      await app.page.getByRole('link', { name: /^Action/ }).click();
-      await app.page.getByText('chase.mkv').waitFor();
-      assert.equal(locationOf(app.page), '/storage/files?path=Movies%2FAction');
-      assert.equal(await title(app.page), 'Action');
-      await app.page.locator('.nav-back').click();
-      await app.page.getByRole('link', { name: /^Action/ }).waitFor();
-      assert.equal(await title(app.page), 'Movies');
-      assert.equal(await app.page.evaluate(() => globalThis.scrollY), scrolled);
-      await app.page.locator('.nav-back').click();
-      await app.page.getByText('notes.pdf').waitFor();
-      assert.equal(await title(app.page), 'Drive');
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} search updates the URL, shows partial results and survives a reload`, async app => {
+    await app.page.goto('https://leon.test/storage/files?path=Movies');
+    await app.page.getByRole('link', { name: /^Action/ }).waitFor();
+    await app.page.getByRole('searchbox', { name: 'Search this folder' }).fill('mkv');
+    await app.page.clock.fastForward(400);
+    await app.page.getByText('Partial results; refine the search').waitFor();
+    assert.equal(locationOf(app.page), '/storage/files?path=Movies&q=mkv');
+    assert.ok(app.requests.includes('/leon/v1/storage/files?path=Movies&q=mkv'));
+    assert.equal(await app.page.locator('.group-title').textContent(), 'Search results');
+    assert.match(await app.page.locator('.row', { hasText: 'match.mkv' }).textContent(), /Movies/);
+    await app.page.reload();
+    await app.page.getByText('Partial results; refine the search').waitFor();
+    assert.equal(await app.page.getByRole('searchbox').inputValue(), 'mkv');
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} search updates the URL, shows partial results and survives a reload`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/storage/files?path=Movies');
-      await app.page.getByRole('link', { name: /^Action/ }).waitFor();
-      await app.page.getByRole('searchbox', { name: 'Search this folder' }).fill('mkv');
-      await app.page.clock.fastForward(400);
-      await app.page.getByText('Partial results; refine the search').waitFor();
-      assert.equal(locationOf(app.page), '/storage/files?path=Movies&q=mkv');
-      assert.ok(app.requests.includes('/leon/v1/storage/files?path=Movies&q=mkv'));
-      assert.equal(await app.page.locator('.group-title').textContent(), 'Search results');
-      assert.match(await app.page.locator('.row', { hasText: 'match.mkv' }).textContent(), /Movies/);
-      await app.page.reload();
-      await app.page.getByText('Partial results; refine the search').waitFor();
-      assert.equal(await app.page.getByRole('searchbox').inputValue(), 'mkv');
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} a missing folder shows the unavailable state`, async app => {
+    await app.page.goto('https://leon.test/storage/files?path=Gone');
+    await app.page.getByText('Folder unavailable or drive not mounted').waitFor();
+    assert.equal(await app.page.getByRole('searchbox').isVisible(), false);
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} a missing folder shows the unavailable state`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/storage/files?path=Gone');
-      await app.page.getByText('Folder unavailable or drive not mounted').waitFor();
-      assert.equal(await app.page.getByRole('searchbox').isVisible(), false);
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} file rows link to the download route with an encoded path`, async app => {
+    await app.page.goto('https://leon.test/storage/files?path=Movies');
+    const link = app.page.getByRole('link', { name: /^A b&c\.mp4/ });
+    assert.equal(await link.getAttribute('href'), '/storage/download?path=Movies%2FA%20b%26c.mp4');
+    assert.equal(await app.page.getByRole('link', { name: /^Action/ }).getAttribute('href'), '/storage/files?path=Movies%2FAction');
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} file rows link to the download route with an encoded path`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/storage/files?path=Movies');
-      const link = app.page.getByRole('link', { name: /^A b&c\.mp4/ });
-      assert.equal(await link.getAttribute('href'), '/storage/download?path=Movies%2FA%20b%26c.mp4');
-      assert.equal(await app.page.getByRole('link', { name: /^Action/ }).getAttribute('href'), '/storage/files?path=Movies%2FAction');
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
+  appTest(browserType, `${browserType.name()} the Failed filter refetches with status=failed and updates the URL`, async app => {
+    await app.page.goto('https://leon.test/storage/automation');
+    await app.page.getByText('n8n is ready').waitFor();
+    assert.equal(await app.page.getByRole('link', { name: 'Open n8n editor' }).getAttribute('href'), 'https://leon-home.tail1234.ts.net/');
+    assert.equal(await app.page.getByRole('link', { name: 'Open Nightly backup in the n8n editor' }).getAttribute('href'), 'https://leon-home.tail1234.ts.net/workflow/wf_1');
+    assert.equal(await app.page.locator('.reading', { hasText: 'Recent runs' }).locator('.reading-value').textContent(), '2');
+    await app.page.getByRole('radio', { name: 'Failed' }).click();
+    await app.page.locator('.reading', { hasText: 'Recent runs' }).locator('.reading-value', { hasText: /^1$/ }).waitFor();
+    await app.page.getByText('Failed · 2026-11-20 14:03 UTC').waitFor();
+    assert.equal(await app.page.locator('.reading', { hasText: 'Recent runs' }).locator('.reading-value').textContent(), '1');
+    assert.equal(locationOf(app.page), '/storage/automation?status=failed');
+    assert.ok(app.requests.includes('/leon/v1/automation?status=failed'));
+    assert.equal(await app.page.getByRole('radio', { name: 'Failed' }).getAttribute('aria-checked'), 'true');
+    assert.deepEqual(app.errors, []);
   });
 
-  test(`${browserType.name()} the Failed filter refetches with status=failed and updates the URL`, async () => {
-    const app = await start(browserType);
-    try {
-      await app.page.goto('https://leon.test/storage/automation');
-      await app.page.getByText('n8n is ready').waitFor();
-      assert.equal(await app.page.getByRole('link', { name: 'Open n8n editor' }).getAttribute('href'), 'https://leon-home.tail1234.ts.net/');
-      assert.equal(await app.page.getByRole('link', { name: 'Open Nightly backup in the n8n editor' }).getAttribute('href'), 'https://leon-home.tail1234.ts.net/workflow/wf_1');
-      assert.equal(await app.page.locator('.reading', { hasText: 'Recent runs' }).locator('.reading-value').textContent(), '2');
-      await app.page.getByRole('radio', { name: 'Failed' }).click();
-      await app.page.locator('.reading', { hasText: 'Recent runs' }).locator('.reading-value', { hasText: /^1$/ }).waitFor();
-      await app.page.getByText('Failed · 2026-11-20 14:03 UTC').waitFor();
-      assert.equal(await app.page.locator('.reading', { hasText: 'Recent runs' }).locator('.reading-value').textContent(), '1');
-      assert.equal(locationOf(app.page), '/storage/automation?status=failed');
-      assert.ok(app.requests.includes('/leon/v1/automation?status=failed'));
-      assert.equal(await app.page.getByRole('radio', { name: 'Failed' }).getAttribute('aria-checked'), 'true');
-      assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
-
-  test(`${browserType.name()} connection settings post with the token, stay open when refused and never echo the key`, async () => {
-    const app = await start(browserType, { answer: count => (count === 1 ? { status: 'refused', message: 'n8n rejected that key' } : { status: 'saved', message: 'Connection saved' }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} connection settings post with the token, stay open when refused and never echo the key`,
+    async app => {
       await app.page.goto('https://leon.test/storage/automation');
       await app.page.getByRole('button', { name: /^Connection settings/ }).click();
       const sheet = app.page.locator('.sheet');
@@ -364,22 +343,21 @@ for (const browserType of [chromium, webkit]) {
       assert.equal(app.posts.length, 2);
       assert.equal(await app.page.locator('input[type=password]').count(), 0);
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
+    },
+    { answer: count => (count === 1 ? { status: 'refused', message: 'n8n rejected that key' } : { status: 'saved', message: 'Connection saved' }) }
+  );
 
-  test(`${browserType.name()} a forbidden answer asks for a reload`, async () => {
-    const app = await start(browserType, { answer: () => ({ status: 'forbidden', message: '' }) });
-    try {
+  appTest(
+    browserType,
+    `${browserType.name()} a forbidden answer asks for a reload`,
+    async app => {
       await app.page.goto('https://leon.test/storage/automation');
       await app.page.getByRole('button', { name: /^Connection settings/ }).click();
       await app.page.locator('.sheet').getByRole('button', { name: 'Save connection' }).click();
       await app.page.locator('.toast.is-refused', { hasText: 'Reload the page' }).waitFor();
       assert.equal(await app.page.locator('.sheet').isVisible(), true);
       assert.deepEqual(app.errors, []);
-    } finally {
-      await app.close();
-    }
-  });
+    },
+    { answer: () => ({ status: 'forbidden', message: '' }) }
+  );
 }

@@ -24,7 +24,7 @@ export function runTime(startedAt: string): string {
   return match ? `${match[1]} ${match[2]} UTC` : startedAt;
 }
 
-function workflowRows(view: AutomationView): ListRow[] {
+function workflowRows(view: AutomationView): Array<ListRow> {
   const editor = view.editorUrl?.replace(/\/$/, '');
   return (view.workflows ?? []).map(workflow => ({
     kind: 'value',
@@ -44,7 +44,7 @@ function workflowRows(view: AutomationView): ListRow[] {
   }));
 }
 
-function executionRows(view: AutomationView): ListRow[] {
+function executionRows(view: AutomationView): Array<ListRow> {
   return (view.executions ?? []).map(execution => ({
     kind: 'value',
     title: execution.workflowName,

@@ -1,6 +1,7 @@
 import type { RatePoint } from './contracts.js';
 import { svgNS } from './presentation.js';
-export function splitSeries(points: ReadonlyArray<RatePoint>, index: 0 | 1, width: number, height: number, max: number): Array<Array<readonly [number, number]>> {
+export function splitSeries(points: ReadonlyArray<RatePoint>, index: 0 | 1, dimensions: { width: number; height: number; max: number }): Array<Array<readonly [number, number]>> {
+  const { width, height, max } = dimensions;
   // Null readings split the line: a gap is shown instead of an invented zero.
   const segments: Array<Array<readonly [number, number]>> = [];
   let current: Array<readonly [number, number]> = [];
@@ -35,17 +36,17 @@ export function drawChart(svg: SVGSVGElement, points: ReadonlyArray<RatePoint>, 
     [0, kinds[0]],
     [1, kinds[1]],
   ] satisfies Array<readonly [0 | 1, string]>)
-    for (const segment of splitSeries(points, index, width, height, max)) {
+    for (const segment of splitSeries(points, index, { width, height, max })) {
       const first = segment[0],
         last = segment[segment.length - 1];
       if (!first || !last) continue;
-      const path = segment.map((point, position) => (position ? 'L' : 'M') + point[0].toFixed(1) + ' ' + point[1].toFixed(1)).join('');
+      const path = segment.map((point, position) => `${(position ? 'L' : 'M') + point[0].toFixed(1)} ${point[1].toFixed(1)}`).join('');
       const area = document.createElementNS(svgNS, 'path');
-      area.setAttribute('class', 'area ' + kind);
-      area.setAttribute('d', path + `L${last[0].toFixed(1)} ${height}L${first[0].toFixed(1)} ${height}Z`);
+      area.setAttribute('class', `area ${kind}`);
+      area.setAttribute('d', `${path}L${last[0].toFixed(1)} ${height}L${first[0].toFixed(1)} ${height}Z`);
       const line = document.createElementNS(svgNS, 'path');
-      line.setAttribute('class', 'line ' + kind);
-      line.setAttribute('d', segment.length > 1 ? path : path + 'h1');
+      line.setAttribute('class', `line ${kind}`);
+      line.setAttribute('d', segment.length > 1 ? path : `${path}h1`);
       svg.append(area, line);
     }
 }

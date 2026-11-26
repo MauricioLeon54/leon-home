@@ -39,8 +39,11 @@ class PanelTests(unittest.TestCase):
     def request(self, path, login=None, data=None, extra=None):
         headers = {'Tailscale-User-Login': login} if login else {}
         headers.update(extra or {})
-        return urllib.request.urlopen(
-            urllib.request.Request(self.origin + path, headers=headers, data=data), timeout=2
+        # Synthetic test server URL on loopback; never a caller-supplied scheme.
+        return urllib.request.urlopen(  # noqa: S310
+            # Synthetic loopback HTTP test URL.
+            urllib.request.Request(self.origin + path, headers=headers, data=data),  # noqa: S310
+            timeout=2,
         )
 
     def test_missing_owner_never_allows_shared_users(self):
@@ -53,16 +56,18 @@ class PanelTests(unittest.TestCase):
                     raised.exception.close()
 
     def test_owner_page_uses_nonce_and_no_inline_handlers(self):
-        with patch.object(family.overview, 'OWNERS', {'owner@example.test'}):
-            with self.request('/updates', 'owner@example.test') as response:
-                body = response.read().decode()
-                for asset in ('home.css', 'updates.css', 'updates.js'):
-                    self.assertIn('/network-map/assets/' + asset, body)
-                self.assertIn('lang="en"', body)
-                self.assertIn('Accept and install', body)
-                self.assertNotIn('onclick=', body)
-                self.assertIn("script-src 'nonce-", response.headers['Content-Security-Policy'])
-                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        with (
+            patch.object(family.overview, 'OWNERS', {'owner@example.test'}),
+            self.request('/updates', 'owner@example.test') as response,
+        ):
+            body = response.read().decode()
+            for asset in ('home.css', 'updates.css', 'updates.js'):
+                self.assertIn('/network-map/assets/' + asset, body)
+            self.assertIn('lang="en"', body)
+            self.assertIn('Accept and install', body)
+            self.assertNotIn('onclick=', body)
+            self.assertIn("script-src 'nonce-", response.headers['Content-Security-Policy'])
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
 
     def test_home_network_offline_and_installable_manifest_use_english(self):
         sample = {'snapshot': {}, 'host': {}, 'dns': None, 'at': 1_700_000_000}
@@ -75,11 +80,13 @@ class PanelTests(unittest.TestCase):
                 ('/network-map', 'src="/network-map/assets/leon.js"'),
                 ('/offline', 'Connect Tailscale and try again.'),
             ):
-                with self.subTest(path=path):
-                    with self.request(path, 'owner@example.test') as response:
-                        body = response.read().decode()
-                        self.assertIn('lang="en"', body)
-                        self.assertIn(expected, body)
+                with (
+                    self.subTest(path=path),
+                    self.request(path, 'owner@example.test') as response,
+                ):
+                    body = response.read().decode()
+                    self.assertIn('lang="en"', body)
+                    self.assertIn(expected, body)
             with self.request('/manifest.webmanifest', 'owner@example.test') as response:
                 self.assertEqual(json.load(response)['lang'], 'en')
             with self.request('/leon/v1/session', 'owner@example.test') as response:

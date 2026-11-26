@@ -1,6 +1,7 @@
 import { postNetwork } from '../../api.js';
 import type { Day, Device, Feedback, Schedule, Snapshot } from '../../contracts.js';
 import { type Child, h } from '../../core/dom.js';
+import { isNonzeroNumber } from '../../core/format.js';
 import { language, serverText, t } from '../../i18n/index.js';
 import { feedbackFor } from '../../presentation.js';
 import { parseSchedule } from '../../snapshot.js';
@@ -95,7 +96,7 @@ export function renameForm({ device, memory, token, controls, isReadOnly }: Devi
       className: 'text-input',
       attrs: { 'type': 'text', 'maxlength': '40', 'autocomplete': 'off', 'enterkeyhint': 'done', 'placeholder': t('Device name'), 'aria-label': t('Device name') },
     }),
-    submit = button({ label: t('Rename'), isDisabled: isReadOnly, onPress: () => {} }),
+    submit = button({ label: t('Rename'), isDisabled: isReadOnly, onPress() {} }),
     form = h('form', { className: 'inline-form' }, [input, submit]);
   input.value = device.name === device.address ? '' : device.name;
   submit.type = 'submit';
@@ -153,15 +154,14 @@ export function pauseRow({ device, memory, token, controls, isReadOnly }: Device
 /** A wired device cannot be paused by the Wi-Fi filter; its Internet is cut at its router port. */
 export function wiredRow({ device, snapshot }: DeviceControlProps): ListRow | null {
   if (device.role === 'router' || device.traffic?.connection !== 'ethernet') return null;
-  const telemetry = snapshot.routerTelemetry,
-    allowed = new Set(telemetry.controllablePorts),
-    ports = (telemetry.ports ?? []).filter(port => allowed.has(port.port) && port.wan !== true),
+  const allowed = new Set(snapshot.routerTelemetry.controllablePorts),
+    ports = (snapshot.routerTelemetry.ports ?? []).filter(port => allowed.has(port.port) && port.wan !== true),
     own = device.traffic.port;
   return {
     kind: 'navigation',
-    title: own ? t('Network access · LAN {0}', own) : t('Network access · Ethernet'),
-    href: own ? `/network?view=ports&port=${own}` : '/network?view=ports',
-    detail: own
+    title: isNonzeroNumber(own) ? t('Network access · LAN {0}', own) : t('Network access · Ethernet'),
+    href: isNonzeroNumber(own) ? `/network?view=ports&port=${own}` : '/network?view=ports',
+    detail: isNonzeroNumber(own)
       ? allowed.has(own)
         ? t('On LAN {0}. Switch off that port to cut its Internet; everything on it disconnects.', own)
         : t('On LAN {0}, a protected port. The Wi-Fi pause does not apply to wired devices.', own)
@@ -225,7 +225,7 @@ function editor(props: DeviceControlProps): HTMLElement {
       label: t('Save schedule'),
       variant: 'primary',
       isDisabled: isReadOnly,
-      onPress: () => {
+      onPress() {
         memory.draftStart = start.value;
         memory.draftEnd = end.value;
         const days = [...memory.draftDays].sort();
@@ -241,7 +241,7 @@ function editor(props: DeviceControlProps): HTMLElement {
     }),
     cancel = button({
       label: t('Cancel'),
-      onPress: () => {
+      onPress() {
         memory.isEditingSchedule = false;
         memory.scheduleFeedback = null;
         controls.repaint();
@@ -266,7 +266,7 @@ export function scheduleBlock(props: DeviceControlProps): Array<Child> {
       label: t('Scheduled pause'),
       checked: saved !== null || memory.isEditingSchedule,
       isDisabled: isReadOnly,
-      onChange: async requested => {
+      async onChange(requested) {
         if (requested) {
           startEditing(props);
           controls.repaint();
@@ -308,7 +308,7 @@ export function wakeRow({ device, token, controls, isReadOnly }: DeviceControlPr
     title: t('Wake'),
     detail: t('Sends a Wake-on-LAN packet. The device may take a minute to appear.'),
     isDisabled: isReadOnly || token === '',
-    onSelect: () => {
+    onSelect() {
       void controls.run(async () => {
         try {
           const reply = await postNetwork('/api/v1/network/wake', { address: device.id }, token);

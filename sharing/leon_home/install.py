@@ -35,7 +35,8 @@ def validate_key(path, fingerprint):
     if len(fingerprint) != 64 or any(char not in '0123456789abcdef' for char in fingerprint):
         raise ReleaseError('invalidConfiguration')
     der = subprocess.run(
-        ['openssl', 'pkey', '-pubin', '-in', str(path), '-outform', 'DER'],
+        # Fixed administrator tool from the installation PATH; no request selects the executable.
+        ['openssl', 'pkey', '-pubin', '-in', str(path), '-outform', 'DER'],  # noqa: S607
         capture_output=True,
         timeout=10,
         check=True,
@@ -200,7 +201,11 @@ def install(
             'leon-overview.service',
         ):
             subprocess.run(
-                ['systemctl', 'stop', unit], capture_output=True, timeout=100, check=False
+                # Fixed runtime tool from the service PATH; callers cannot select an executable.
+                ['systemctl', 'stop', unit],  # noqa: S607
+                capture_output=True,
+                timeout=100,
+                check=False,
             )
         stop = time.monotonic() + 95
         while run(
@@ -482,6 +487,7 @@ def maintain(bundle, key, fingerprint, bootstrap):
     login_summary(bootstrap)
     write(CONFIG / 'broker.sha256', candidate['brokerSha256'] + '\n')
     run('systemctl', 'daemon-reload')
+    run('systemctl', 'restart', 'leon-router.service')
     run('systemctl', 'restart', 'leon-overview.service')
     run(
         'systemctl',

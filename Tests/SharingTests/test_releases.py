@@ -64,7 +64,8 @@ class ReleaseFixture(unittest.TestCase):
             subprocess.run(command, capture_output=True, check=True, timeout=10)
         self.key.chmod(0o600)
         der = subprocess.run(
-            ['openssl', 'pkey', '-pubin', '-in', str(self.public), '-outform', 'DER'],
+            # Fixed tool in the developer test PATH; no caller chooses the executable.
+            ['openssl', 'pkey', '-pubin', '-in', str(self.public), '-outform', 'DER'],  # noqa: S607
             capture_output=True,
             check=True,
         ).stdout
@@ -73,7 +74,7 @@ class ReleaseFixture(unittest.TestCase):
     def bundle(self, version='1.0.0', sequence=1, members=None):
         folder = self.root / ('bundle-' + version)
         folder.mkdir()
-        members = members or {name: b'fixture' for name in FILES}
+        members = members or dict.fromkeys(FILES, b'fixture')
         with tarfile.open(
             folder / 'leon-home-arm64.tar.gz', 'w:gz', format=tarfile.USTAR_FORMAT
         ) as archive:
@@ -110,7 +111,8 @@ class ReleaseFixture(unittest.TestCase):
     def sign(self, folder, value):
         (folder / 'manifest.json').write_text(json.dumps(value))
         subprocess.run(
-            [
+            # Fixed tool in the developer test PATH; no caller chooses the executable.
+            [  # noqa: S607
                 'openssl',
                 'pkeyutl',
                 '-sign',
@@ -134,11 +136,11 @@ class ArchiveTests(ReleaseFixture):
         destination = self.root / 'release'
         self.assertEqual(release.unpack(folder, destination, self.public), value)
         self.assertEqual(
-            set(
+            {
                 str(path.relative_to(destination))
                 for path in destination.rglob('*')
                 if path.is_file()
-            ),
+            },
             FILES | {'release.json'},
         )
         self.assertEqual((destination / 'inventory/leon-netmap').stat().st_mode & 0o777, 0o755)
@@ -165,7 +167,7 @@ class ArchiveTests(ReleaseFixture):
 
     def test_missing_or_extra_tar_members_cannot_write_outside_release(self):
         for index, members in enumerate(
-            ({'../outside': b'bad'}, {name: b'fixture' for name in list(FILES)[:-1]})
+            ({'../outside': b'bad'}, dict.fromkeys(list(FILES)[:-1], b'fixture'))
         ):
             with self.subTest(index=index):
                 folder, _ = self.bundle(f'1.0.{index}', index + 1, members)
@@ -218,9 +220,8 @@ class ArchiveTests(ReleaseFixture):
                 }
             },
         ):
-            with self.subTest(change=list(change)):
-                with self.assertRaises(ReleaseError):
-                    manifest({**current, **change})
+            with self.subTest(change=list(change)), self.assertRaises(ReleaseError):
+                manifest({**current, **change})
 
     def test_site_rejects_shell_text_and_ambiguous_owner(self):
         for change in (
@@ -269,14 +270,37 @@ class ActivationTests(ReleaseFixture):
 
         with (
             patch.object(activation, 'paused_inventory', side_effect=contextlib.nullcontext),
-            patch.object(activation, 'command'),
+            patch.object(activation, 'command') as command,
             patch.object(activation, 'healthy', side_effect=[False, True]),
+            self.assertRaises(ReleaseError) as error,
         ):
-            with self.assertRaises(ReleaseError) as error:
-                activation.activate(self.next, SITE['owner'])
+            activation.activate(self.next, SITE['owner'])
+        self.assertEqual(
+            command.call_args_list.count(
+                unittest.mock.call('systemctl', 'restart', 'leon-router.service')
+            ),
+            2,
+        )
         self.assertEqual(error.exception.code, 'rolledBack')
         self.assertEqual((self.app / 'current').resolve(), self.previous)
         self.assertFalse((self.state / 'transaction.json').exists())
+
+    def test_successful_activation_restarts_router_before_overview(self):
+        import contextlib
+
+        with (
+            patch.object(activation, 'paused_inventory', side_effect=contextlib.nullcontext),
+            patch.object(activation, 'command') as command,
+            patch.object(activation, 'healthy', return_value=True),
+        ):
+            activation.activate(self.next, SITE['owner'])
+        self.assertEqual(
+            command.call_args_list[:2],
+            [
+                unittest.mock.call('systemctl', 'restart', 'leon-router.service'),
+                unittest.mock.call('systemctl', 'restart', 'leon-overview.service'),
+            ],
+        )
 
     def test_interrupted_activation_is_recovered_on_restart(self):
         import contextlib
@@ -319,6 +343,7 @@ class InstallerTests(ReleaseFixture):
                     }
                 )
             self.fail('Plan attempted a mutating command')
+            return None
 
         with (
             patch.multiple(install, ROOT=target, CONFIG=config, run=read_only),
@@ -356,7 +381,8 @@ class WorkerTests(ReleaseFixture):
         self.addCleanup(worker.executor.shutdown)
         for value in (
             {'operation': 'shell'},
-            {'operation': 'apply', 'version': '/tmp/anything'},
+            # Invalid-path string fixture only; no temporary file is created.
+            {'operation': 'apply', 'version': '/tmp/anything'},  # noqa: S108
             {'operation': 'status', 'command': 'id'},
         ):
             with self.assertRaises(ReleaseError):

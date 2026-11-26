@@ -50,11 +50,11 @@ export function renderRaspberry(context: RouteContext): PageView {
         navRow(t('Power & services'), '/settings/raspberry/power', view.power.rebootRequired ? t('Restart needed') : undefined),
       ];
     return [
-      section(view.board ? { title: view.board } : {}, [
+      section(view.board !== null && view.board !== '' ? { title: view.board } : {}, [
         card([
           readingGrid(
             [
-              metric(state, t('Temperature'), readings.temperatureCelsius, celsius, isHot ? 'warn' : undefined),
+              metric({ ...state, tone: isHot ? 'warn' : undefined }, t('Temperature'), readings.temperatureCelsius, celsius),
               metric(state, t('CPU'), readings.cpuPercent, value => percent(value)),
               metric(state, t('Free memory'), readings.memoryAvailableBytes, bytes),
               metric(state, t('Free storage'), readings.storageFreeBytes, bytes),

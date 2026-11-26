@@ -36,7 +36,7 @@ function tile(device: Device, index: number, state: NetworkState, memory: Networ
         className: ['node', `is-${presence}`, device.paused ? 'is-paused' : '', memory.hasPainted ? '' : 'is-entering'].filter(Boolean).join(' '),
         attrs: {
           'href': devicePath(device.id),
-          'aria-label': [device.name, STATUS[presence].toLowerCase(), device.paused ? 'paused' : '', device.isNew ? t('new device') : '', isFlowing ? t('{0} Mbps down', download) : '']
+          'aria-label': [device.name, STATUS[presence].toLowerCase(), device.paused ? t('Paused') : '', device.isNew ? t('new device') : '', isFlowing ? t('{0} Mbps down', download) : '']
             .filter(Boolean)
             .join(', '),
         },
@@ -136,7 +136,7 @@ export function mapView(snapshot: Snapshot, state: NetworkState, memory: Network
       attrs: { 'type': 'search', 'placeholder': t('Find a device'), 'aria-label': t('Find a device'), 'autocomplete': 'off', 'enterkeyhint': 'search' },
     });
   search.value = memory.query;
-  const root = h('div', { className: 'map' }, [
+  const root = h('div', { className: 'map', dataset: { total: String(snapshot.devices.length) } }, [
     h('div', { className: 'map-toolbar' }, [
       search,
       h('ul', { className: 'map-legend', attrs: { 'aria-label': t('Legend') } }, [
@@ -160,7 +160,7 @@ export function mapView(snapshot: Snapshot, state: NetworkState, memory: Network
   ]);
   search.addEventListener('input', () => {
     memory.query = search.value;
-    applyFilter(root, memory.query, snapshot.devices.length);
+    applyFilter(root, memory.query, Number(root.dataset.total));
   });
   applyFilter(root, memory.query, snapshot.devices.length);
   return [root];

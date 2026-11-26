@@ -17,7 +17,7 @@ const FLAGS = [
 ] as const satisfies ReadonlyArray<readonly [keyof ThrottleFlags, string]>;
 
 function profileNote(cpu: HardwareView['cpu']): string | null {
-  if (cpu.profile === 'custom') return t('Custom setting{0}. Choose a profile to replace it.', cpu.governor ? ` (${cpu.governor})` : '');
+  if (cpu.profile === 'custom') return t('Custom setting{0}. Choose a profile to replace it.', Boolean(cpu.governor) ? ` (${cpu.governor})` : '');
   return cpu.profile === 'unknown' ? t('The CPU profile cannot be read.') : null;
 }
 
@@ -51,7 +51,7 @@ export function renderPerformance(context: RouteContext): PageView {
       });
     return [
       section({ title: t('CPU') }, [
-        card([controlGroup(t('Profile'), segmented.element), note ? h('p', { className: 'note', text: note }) : null]),
+        card([controlGroup(t('Profile'), segmented.element), note !== null && note !== '' ? h('p', { className: 'note', text: note }) : null]),
         list([{ kind: 'value', title: t('Current frequency'), value: cpu.frequencyMhz === null ? UNKNOWN : `${Math.round(cpu.frequencyMhz)} MHz` }]),
       ]),
       throttling ? section({ title: t('Throttling now') }, [flagRows(throttling.now)]) : section({ title: t('Throttling') }, [h('p', { className: 'note', text: t('No reading from the firmware.') })]),
