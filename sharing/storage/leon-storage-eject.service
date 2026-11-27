@@ -1,0 +1,9 @@
+[Unit]
+Description=Eject the LEÓN household drive
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/local/lib/leon-storage/eject.sh
+# Always consume the request, or the .path unit would start this service again.
+ExecStopPost=/bin/rm -f /var/lib/leon-overview/eject-request
+TimeoutStartSec=40

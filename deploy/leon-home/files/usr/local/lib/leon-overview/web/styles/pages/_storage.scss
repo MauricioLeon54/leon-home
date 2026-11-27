@@ -57,6 +57,23 @@
 .drive-actions {
   margin-top: 16px;
 }
+.eject-notice {
+  margin-top: 14px;
+
+  .status-line {
+    margin-bottom: 4px;
+  }
+  .note,
+  &.note {
+    margin-inline: 0;
+  }
+  &.is-warn {
+    color: color('warn');
+  }
+  &.is-danger {
+    color: color('danger');
+  }
+}
 a.btn,
 a.link-button {
   text-decoration: none;

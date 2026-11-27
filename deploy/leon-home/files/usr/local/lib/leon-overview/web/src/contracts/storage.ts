@@ -18,6 +18,7 @@ export interface StorageView {
     filesystem: string | null;
     isReadOnly: boolean | null; // host mount state; null unknown
     openUrl: string | null; // smb://<tailnet or home IPv4>/<share>
+    canEject: boolean; // mounted USB disk and the root eject service is installed
   };
   peers: Array<{ name: string; url: string }>; // ≤ 4, smb:// URLs validated by PEER_URL
   connections: Array<{ platform: string; address: string; note: string }>; // ≤ 5; empty: sharing not set up
@@ -33,6 +34,9 @@ export interface StoragePasswordRequest {
   drive: string;
   user: string;
 }
+
+/** POST /api/v1/storage/eject ({}) → {status, message}; message is server English (≤ 200). */
+export type EjectOutcome = 'ejected' | 'busy' | 'notMounted' | 'unavailable' | 'failed';
 
 /** GET /api/v1/storage/files?path=<relative>&q=<search> (404 JSON {status:'unavailable'} when the folder is unavailable) */
 export interface FilesView {
@@ -76,7 +80,7 @@ export interface MoviesView {
     title: string;
     year: number | null;
     posterUrl: string | null; // /storage/poster?movie=<encoded id> (342×513 JPEG)
-    videoPath: string | null; // drive-relative path for /storage/download
+    videoUrl: string | null; // /storage/movie-video?movie=<encoded id>; the server picks inline or attachment
     canPlayInline: boolean; // mp4/m4v/mov play in Safari; anything else downloads
     sizeBytes: number | null;
     addedAt: number | null; // unix seconds
@@ -95,6 +99,7 @@ const MAX_BYTES = 2 ** 60;
 const MAX_UNIX = 4_102_444_800;
 const POSTER_URL = /^\/storage\/poster\?movie=[^&#]{1,800}$/;
 const MOVIE_ID = /^[^/]{1,255}$/;
+const VIDEO_URL = /^\/storage\/movie-video\?movie=[^&#]{1,800}$/;
 
 function matching(value: unknown, pattern: RegExp, maximum: number): string {
   const text = string(value, maximum);
@@ -121,6 +126,7 @@ export function parseStorage(value: unknown): StorageView {
       filesystem: nullable(drive.filesystem, item => string(item, 40)),
       isReadOnly: optionalBoolean(drive.isReadOnly),
       openUrl: nullable(drive.openUrl, item => matching(item, SMB_URL, 400)),
+      canEject: boolean(drive.canEject),
     },
     peers: items(root.peers, 4, item => {
       const peer = record(item);
@@ -217,7 +223,7 @@ export function parseMovies(value: unknown): MoviesView {
         title: string(movie.title, 255),
         year: nullable(movie.year, year => integer(year, 1888, 2100)),
         posterUrl: nullable(movie.posterUrl, url => matching(url, POSTER_URL, 820)),
-        videoPath: nullable(movie.videoPath, relativePath),
+        videoUrl: nullable(movie.videoUrl, url => matching(url, VIDEO_URL, 830)),
         canPlayInline: boolean(movie.canPlayInline),
         sizeBytes: nullableNumber(movie.sizeBytes, 0, MAX_BYTES),
         addedAt: nullableNumber(movie.addedAt, 0, MAX_UNIX),

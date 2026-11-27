@@ -1,12 +1,15 @@
+import { postAction } from '../../api.js';
 import { parseStorage, type StorageView } from '../../contracts/storage.js';
 import { type Child, h } from '../../core/dom.js';
 import type { PageView, RouteContext } from '../../core/router.js';
 import { serverText, t } from '../../i18n/index.js';
+import { button } from '../../ui/button.js';
+import { confirm } from '../../ui/confirm.js';
 import { emptyState } from '../../ui/empty.js';
 import { list, type ListRow } from '../../ui/list.js';
 import { card, section } from '../../ui/section.js';
 import { statusDot } from '../../ui/statusDot.js';
-import { livePage } from '../settings/livePage.js';
+import { type LiveControls, livePage } from '../settings/livePage.js';
 import { copyButton } from './copyButton.js';
 import { linkButton } from './linkButton.js';
 
@@ -46,7 +49,27 @@ function driveFacts({ drive }: StorageView): string {
   return [drive.label, drive.filesystem, access].filter(Boolean).join(' · ');
 }
 
-function myDrive(view: StorageView): HTMLElement {
+/** Page-local eject progress; the drive card shows it until the page is left. */
+type EjectState = { kind: 'idle' } | { kind: 'ejecting' } | { kind: 'ejected' | 'busy' | 'failed'; message: string };
+
+function ejectNotice(state: EjectState): HTMLElement | null {
+  switch (state.kind) {
+    case 'idle':
+    case 'ejecting':
+      return null;
+    case 'ejected':
+      return h('div', { className: 'eject-notice', attrs: { role: 'status' } }, [
+        h('p', { className: 'status-line' }, [statusDot('good'), t('Safe to unplug')]),
+        h('p', { className: 'note', text: state.message }),
+      ]);
+    case 'busy':
+      return h('p', { className: 'note eject-notice is-warn', attrs: { role: 'status' }, text: state.message });
+    case 'failed':
+      return h('p', { className: 'note eject-notice is-danger', attrs: { role: 'alert' }, text: state.message });
+  }
+}
+
+function myDrive(view: StorageView, eject: { state: EjectState; onEject: () => void }): HTMLElement {
   const { drive } = view,
     space = drive.totalBytes !== null && drive.totalBytes > 0 && drive.freeBytes !== null ? { total: drive.totalBytes, free: drive.freeBytes } : null,
     facts = driveFacts(view);
@@ -60,8 +83,12 @@ function myDrive(view: StorageView): HTMLElement {
       ? h('div', { className: 'buttons drive-actions' }, [
           drive.isMounted ? linkButton(t('Browse files'), '/storage/files', 'primary') : null,
           drive.openUrl === null ? null : linkButton(t('Open in Files or Finder'), drive.openUrl),
+          drive.canEject || eject.state.kind === 'ejecting'
+            ? button({ label: eject.state.kind === 'ejecting' ? t('Ejecting…') : t('Eject'), isDisabled: eject.state.kind === 'ejecting', onPress: eject.onEject })
+            : null,
         ])
       : null,
+    ejectNotice(eject.state),
   ]);
 }
 
@@ -115,19 +142,44 @@ function usbSection({ usbDrives }: StorageView): HTMLElement {
   ]);
 }
 
+/** 'notMounted', 'unavailable', 'failed' and anything unexpected read as a failure with the server's sentence. */
+function ejectKind(outcome: string): 'ejected' | 'busy' | 'failed' {
+  return outcome === 'ejected' || outcome === 'busy' ? outcome : 'failed';
+}
+
 export function renderStorage(context: RouteContext): PageView {
+  let eject: EjectState = { kind: 'idle' };
+  async function ejectDrive(controls: LiveControls): Promise<void> {
+    const isConfirmed = await confirm({
+      title: t('Eject the drive?'),
+      message: t('TVs and shared folders stop until the drive is connected again. Unplug it only after LEÓN says it is safe.'),
+      confirmLabel: t('Eject'),
+    });
+    if (!isConfirmed) return;
+    eject = { kind: 'ejecting' };
+    controls.repaint();
+    // run() holds repaints until the POST ends, then refreshes the storage view (the drive then reads as not connected).
+    await controls.run(async () => {
+      try {
+        const result = await postAction('/api/v1/storage/eject', {}, context.session.actionToken);
+        eject = { kind: ejectKind(result.outcome), message: result.message ? serverText(result.message) : t('The drive could not be ejected.') };
+      } catch {
+        eject = { kind: 'failed', message: t('LEÓN Home did not answer. Check the drive before unplugging it.') };
+      }
+    });
+  }
   return livePage({
     context,
     path: '/api/v1/storage',
     parse: parseStorage,
     intervalMs: REFRESH_MS,
     observedAt: () => null,
-    build(view) {
+    build(view, _state, controls) {
       const automation: Array<ListRow> = context.session.features.automation
         ? [{ kind: 'navigation', title: t('Automation'), detail: t('n8n workflows and recent runs'), href: '/storage/automation' }]
         : [];
       return [
-        section({}, [myDrive(view), ...view.peers.map(peerDrive)]),
+        section({}, [myDrive(view, { state: eject, onEject: () => void ejectDrive(controls) }), ...view.peers.map(peerDrive)]),
         section({}, [
           list([
             { kind: 'navigation', title: t('Movies'), detail: t('Browse your movie library by poster'), href: '/storage/movies' },

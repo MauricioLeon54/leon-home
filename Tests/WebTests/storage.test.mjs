@@ -12,7 +12,17 @@ const GB = 2 ** 30;
 
 function storageView(overrides = {}) {
   return {
-    drive: { name: 'Family drive', isMounted: true, totalBytes: 1024 * GB, freeBytes: 400 * GB, label: 'FAMILY', filesystem: 'exfat', isReadOnly: false, openUrl: 'smb://100.64.0.7/Family' },
+    drive: {
+      name: 'Family drive',
+      isMounted: true,
+      totalBytes: 1024 * GB,
+      freeBytes: 400 * GB,
+      label: 'FAMILY',
+      filesystem: 'exfat',
+      isReadOnly: false,
+      openUrl: 'smb://100.64.0.7/Family',
+      canEject: true,
+    },
     peers: [{ name: 'Grandma drive', url: 'smb://100.64.0.9/Family' }],
     connections: [
       { platform: 'Mac at home', address: 'smb://leon.local/Family', note: 'Finder → Go → Connect' },
@@ -70,7 +80,7 @@ const movie = (title, year, addedAt, overrides = {}) => ({
   title,
   year,
   posterUrl: `/storage/poster?movie=${encodeURIComponent(`${title} (${year})`)}`,
-  videoPath: `PELICULAS/${title} (${year})/${title}.mp4`,
+  videoUrl: `/storage/movie-video?movie=${encodeURIComponent(`${title} (${year})`)}`,
   canPlayInline: true,
   sizeBytes: 1_500_000_000,
   addedAt,
@@ -80,7 +90,7 @@ function moviesView() {
   return {
     isAvailable: true,
     folder: 'PELICULAS',
-    movies: [movie('Coco', 2017, 1_700_000_000), movie('Película rara', 2001, 1_800_000_000, { posterUrl: null, videoPath: 'PELICULAS/Película rara (2001)/rara.mkv', canPlayInline: false })],
+    movies: [movie('Coco', 2017, 1_700_000_000), movie('Película rara', 2001, 1_800_000_000, { posterUrl: null, canPlayInline: false })],
     review: [{ name: 'coco.final.mkv', reason: 'More than one movie matches this name.', suggestion: 'Coco (2017)' }],
     lastRun: { at: 1_800_000_000, renamed: 2, covers: 3 },
   };
@@ -126,6 +136,10 @@ async function start(browserType, handlers = {}) {
     if (pathname === '/leon/v1/storage/password') {
       posts.push({ token: request.headers()['x-leon-token'], body: request.postDataJSON() });
       return json(...passwordReply(handlers));
+    }
+    if (pathname === '/leon/v1/storage/eject') {
+      posts.push({ token: request.headers()['x-leon-token'], body: request.postDataJSON() });
+      return json(handlers.eject());
     }
     if (pathname === '/leon/v1/automation/settings') {
       posts.push({ token: request.headers()['x-leon-token'], contentType: request.headers()['content-type'], body: request.postDataJSON() });
@@ -231,7 +245,7 @@ for (const browserType of [chromium, webkit]) {
 
   test(`${browserType.name()} unknown capacity shows no meter and a missing drive hides browsing`, async () => {
     const view = storageView({
-      drive: { name: 'My drive', isMounted: false, totalBytes: null, freeBytes: null, label: null, filesystem: null, isReadOnly: null, openUrl: null },
+      drive: { name: 'My drive', isMounted: false, totalBytes: null, freeBytes: null, label: null, filesystem: null, isReadOnly: null, openUrl: null, canEject: false },
       isSharingSetUp: false,
       connections: [],
       peers: [],
@@ -396,14 +410,14 @@ for (const browserType of [chromium, webkit]) {
     await app.page.clock.runFor(400);
     await app.page.locator('.movie-count', { hasText: '1 of 2 movies' }).waitFor();
     await app.page.locator('.movie-grid').getByRole('button', { name: 'Película rara (2001)' }).click();
-    assert.equal(await app.page.getByRole('link', { name: 'Download movie' }).getAttribute('href'), `/storage/download?path=${encodeURIComponent('PELICULAS/Película rara (2001)/rara.mkv')}`);
+    assert.equal(await app.page.getByRole('link', { name: 'Download movie' }).getAttribute('href'), `/storage/movie-video?movie=${encodeURIComponent('Película rara (2001)')}`);
     await app.page.keyboard.press('Escape');
     await app.page.clock.runFor(100);
     await app.page.locator('dialog.sheet').waitFor({ state: 'detached' });
     await app.page.getByRole('searchbox', { name: 'Search movies' }).fill('');
     await app.page.clock.runFor(400);
     await app.page.locator('.movie-grid').getByRole('button', { name: 'Coco (2017)' }).click();
-    assert.equal(await app.page.getByRole('link', { name: 'Play' }).getAttribute('href'), `/storage/download?path=${encodeURIComponent('PELICULAS/Coco (2017)/Coco.mp4')}`);
+    assert.equal(await app.page.getByRole('link', { name: 'Play' }).getAttribute('href'), `/storage/movie-video?movie=${encodeURIComponent('Coco (2017)')}`);
     assert.equal(await app.page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
     assert.deepEqual(app.errors, []);
   });
@@ -418,4 +432,35 @@ for (const browserType of [chromium, webkit]) {
     },
     { movies: () => ({ isAvailable: false, folder: 'PELICULAS', movies: [], review: [], lastRun: null }) }
   );
+
+  for (const [outcome, message, expected] of [
+    ['ejected', 'The drive was ejected. You can unplug it now.', 'Safe to unplug'],
+    ['busy', 'Something is still using the drive. Close it on the other devices and try again.', 'Something is still using the drive'],
+  ]) {
+    let isEjected = false;
+    appTest(
+      browserType,
+      `${browserType.name()} eject asks first, posts once and reports ${outcome}`,
+      async app => {
+        await app.page.goto('https://leon.test/storage');
+        await app.page.getByRole('button', { name: 'Eject', exact: true }).click();
+        await app.page.getByText('Eject the drive?').waitFor();
+        await app.page.locator('.confirm-actions').getByRole('button', { name: 'Eject' }).click();
+        await app.page.getByText(expected).first().waitFor();
+        assert.deepEqual(app.posts, [{ token: 'token-fixture', body: {} }]);
+        if (outcome === 'ejected') {
+          await app.page.getByText('This LEÓN Home · drive not connected').waitFor();
+          assert.equal(await app.page.getByRole('button', { name: 'Eject', exact: true }).count(), 0);
+        } else assert.equal(await app.page.getByRole('button', { name: 'Eject', exact: true }).isEnabled(), true);
+        assert.deepEqual(app.errors, []);
+      },
+      {
+        storage: () => (isEjected ? storageView({ drive: { ...storageView().drive, isMounted: false, totalBytes: null, freeBytes: null, canEject: false } }) : storageView()),
+        eject() {
+          isEjected = outcome === 'ejected';
+          return { status: outcome, message };
+        },
+      }
+    );
+  }
 }

@@ -38,17 +38,14 @@ function poster(movie: Movie, isEager = false): HTMLElement {
   return h('div', { className: 'poster' }, [image]);
 }
 
-function downloadUrl(path: string): string {
-  return `/storage/download?path=${encodeURIComponent(path)}`;
-}
 function openDetail(movie: Movie): Sheet {
   const facts = [movie.year === null ? null : String(movie.year), movie.sizeBytes === null ? null : bytes(movie.sizeBytes)].filter(Boolean).join(' · ');
   let action: Array<Child>;
-  if (movie.videoPath === null) action = [h('p', { className: 'note', text: t('No video file in this folder yet.') })];
-  else if (movie.canPlayInline) action = [h('div', { className: 'buttons' }, [linkButton(t('Play'), downloadUrl(movie.videoPath), 'primary')])];
+  if (movie.videoUrl === null) action = [h('p', { className: 'note', text: t('No video file in this folder yet.') })];
+  else if (movie.canPlayInline) action = [h('div', { className: 'buttons' }, [linkButton(t('Play'), movie.videoUrl, 'primary')])];
   else
     action = [
-      h('div', { className: 'buttons' }, [linkButton(t('Download movie'), downloadUrl(movie.videoPath), 'primary')]),
+      h('div', { className: 'buttons' }, [linkButton(t('Download movie'), movie.videoUrl, 'primary')]),
       h('p', { className: 'note', text: t('This format does not play in the browser. Open the download in VLC or a similar app.') }),
     ];
   return openSheet({

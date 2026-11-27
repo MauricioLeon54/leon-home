@@ -1,0 +1,11 @@
+# Lets the LEÓN Home panel eject the household drive: the panel creates the request file in
+# its own state directory, and root runs leon-storage-eject.service.
+[Unit]
+Description=Watch for LEÓN drive eject requests
+
+[Path]
+PathExists=/var/lib/leon-overview/eject-request
+Unit=leon-storage-eject.service
+
+[Install]
+WantedBy=multi-user.target

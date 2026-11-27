@@ -22,6 +22,10 @@ administrator writes `/etc/leon-overview/storage.json` (root-owned, mode `0644`)
 }
 ```
 
+Optionally add `"movies": "/srv/…/PELICULAS"` to show another folder below `/srv` in
+**Storage → Movies**, for example another home's movie share mounted read-only. Without it the
+page shows `PELICULAS` on this Pi's drive.
+
 Use at most four peers with `smb://` addresses. Invalid entries are ignored. A peer link opens
 the other home's share in Files or Finder; its owner must grant you TCP 445 on that Pi.
 
@@ -195,6 +199,18 @@ This product uses the TMDB API but is not endorsed or certified by TMDB.
    connected, when something is added to `PELICULAS`, and every hour. After a pass that renamed
    or added posters, the Gerbera index is rebuilt (the TV list is empty for a minute or two);
    while a TV is streaming, the rebuild waits for a later pass.
+
+### Eject the drive from the phone
+
+With the eject service installed, the drive card shows **Eject** for a USB drive. It stops
+Gerbera, Samba and the movie library service, unmounts the drive and powers the disk down; the
+panel then says it is safe to unplug. If something still uses the drive, nothing is unplugged
+and everything starts again. Connecting the drive again mounts it and starts the services.
+
+Install `sharing/storage/eject.sh` to `/usr/local/lib/leon-storage/` (root, `0644`) and
+`leon-storage-eject.path` and `.service` to `/etc/systemd/system/`, then
+`sudo systemctl daemon-reload && sudo systemctl enable --now leon-storage-eject.path`. The panel
+only creates a request file in its own state directory; the root service does the work.
 
 ## Serve computers at home without Tailscale
 

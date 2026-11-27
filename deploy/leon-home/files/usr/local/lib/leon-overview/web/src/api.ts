@@ -107,6 +107,7 @@ interface ActionRequests extends HardwareActions, NetworkActions {
   '/updates/check': Record<string, never>;
   '/updates/apply': { version: string };
   '/api/v1/automation/settings': AutomationSettingsRequest;
+  '/api/v1/storage/eject': Record<string, never>;
   '/api/v1/dns/pause': { seconds: 300 | 1800 };
   '/api/v1/dns/resume': Record<string, never>;
 }

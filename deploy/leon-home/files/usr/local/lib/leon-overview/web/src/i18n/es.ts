@@ -796,4 +796,18 @@ export const es = {
   'Connect the drive to LEÓN Home to see your movies.': 'Conecta el disco a LEÓN Home para ver tus películas.',
   'No movies yet': 'Aún no hay películas',
   'Add one folder per movie to {0} on the drive.': 'Agrega una carpeta por película en {0} del disco.',
+  // Eject
+  'Eject': 'Expulsar',
+  'Ejecting…': 'Expulsando…',
+  'Eject the drive?': '¿Expulsar el disco?',
+  'TVs and shared folders stop until the drive is connected again. Unplug it only after LEÓN says it is safe.':
+    'Las TV y carpetas compartidas se detienen hasta que vuelvas a conectar el disco. Desconéctalo solo cuando LEÓN diga que es seguro.',
+  'Safe to unplug': 'Ya puedes desconectarlo',
+  'LEÓN Home did not answer. Check the drive before unplugging it.': 'LEÓN Home no respondió. Revisa el disco antes de desconectarlo.',
+  'The drive was ejected. You can unplug it now.': 'El disco se expulsó. Ya puedes desconectarlo.',
+  'Something is still using the drive. Close it on the other devices and try again.': 'Algo sigue usando el disco. Ciérralo en los otros dispositivos e intenta de nuevo.',
+  'The drive is not connected.': 'El disco no está conectado.',
+  'Ejecting is not set up on this LEÓN Home.': 'Expulsar no está configurado en este LEÓN Home.',
+  'The drive could not be ejected.': 'No se pudo expulsar el disco.',
+  'The drive is already being ejected.': 'El disco ya se está expulsando.',
 } as const;

@@ -1553,6 +1553,31 @@ def usb_storage_view():
     return {'isAvailable': True, 'volumes': rows}
 
 
+def storage_is_usb():
+    """Whether STORAGE_MOUNT is a partition of a USB disk (the only kind the panel can eject)."""
+    try:
+        result = subprocess.run(
+            # Fixed system tool from the service PATH; executable is not supplied by a request.
+            ['lsblk', '--json', '--output', 'TYPE,TRAN,MOUNTPOINTS'],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
+        )
+        devices = json.loads(result.stdout)['blockdevices']
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        return False
+    return any(
+        disk.get('type') == 'disk'
+        and disk.get('tran') == 'usb'
+        and any(
+            STORAGE_MOUNT in (volume.get('mountpoints') or [])
+            for volume in [disk, *disk.get('children', [])]
+        )
+        for disk in devices
+    )
+
+
 SAMBA_CONFIG = '/etc/samba/smb.conf'
 MINIDLNA_CONFIG = '/etc/minidlna.conf'
 GERBERA_CONFIG = '/etc/gerbera/config.xml'
@@ -1560,6 +1585,8 @@ GERBERA_NAME = re.compile(r'<name>([^<]{1,200})</name>')
 # Optional, administrator-written: {"name": "...", "peers": [{"name": "...", "url": "smb://..."}]}
 STORAGE_SETTINGS = '/etc/leon-overview/storage.json'
 DRIVE_NAME = re.compile(r'[^\x00-\x1f\x7f]{1,40}')
+# storage.json "movies": a movie library below /srv, e.g. another home's share mounted read-only.
+MOVIES_PATH = re.compile(r'/srv(/[A-Za-z0-9 _.()-]{1,80}){1,4}')
 PEER_URL = re.compile(r'smb://[A-Za-z0-9.-]{1,253}(/[A-Za-z0-9 _.-]{1,80})?')
 SHARE_NAME = re.compile(r'[A-Za-z0-9 _.-]{1,40}')
 # Optional, administrator-written, root:leon-overview 0640. Only accounts the panel owner may use:
@@ -1588,9 +1615,15 @@ def storage_settings():
         and isinstance(peer.get('url'), str)
         and PEER_URL.fullmatch(peer['url'])
     ]
+    movies = value.get('movies')
     return {
         'name': name if isinstance(name, str) and DRIVE_NAME.fullmatch(name) else None,
         'peers': peers,
+        'movies': movies
+        if isinstance(movies, str)
+        and MOVIES_PATH.fullmatch(movies)
+        and '..' not in movies.split('/')
+        else None,
     }
 
 
@@ -1848,6 +1881,7 @@ def storage_view(*, show_automation=True):
             'filesystem': (volume or {}).get('filesystem'),
             'isReadOnly': (volume or {}).get('readOnly'),
             'openUrl': open_url,
+            'canEject': volume is not None and os.path.isfile(EJECT_SERVICE) and storage_is_usb(),
         },
         'peers': settings['peers'],
         'connections': connections[:5],
@@ -1898,6 +1932,16 @@ INLINE_VIDEOS = frozenset({'mp4', 'm4v', 'mov'})
 MAX_MOVIES = 2000
 MAX_MOVIE_FILES = 100
 MAX_POSTER_BYTES = 2_000_000
+MOVIE_SCAN_SECONDS = 6  # the phone gives up after 8 s
+MOVIE_LOCAL_CACHE_SECONDS = 30
+MOVIE_NETWORK_CACHE_SECONDS = 600
+# Root eject service (sharing/storage/eject.sh, started by leon-storage-eject.path): the panel
+# creates EJECT_REQUEST in its own state directory and the service answers in EJECT_RESULT.
+EJECT_SERVICE = '/usr/local/lib/leon-storage/eject.sh'
+EJECT_REQUEST = '/var/lib/leon-overview/eject-request'
+EJECT_RESULT = '/var/lib/leon-overview/eject-result'
+EJECT_SECONDS = 45
+EJECT_STATUSES = frozenset({'ejected', 'busy', 'notMounted', 'unavailable', 'failed'})
 LIBRARY_STATE = '/var/lib/leon-storage/library.json'
 CHUNK = 1 << 20
 
@@ -2040,7 +2084,7 @@ def movie_row(entry):
         'title': match[1],
         'year': int(match[2]),
         'posterUrl': f'/storage/poster?movie={movie_id}' if has_poster else None,
-        'videoPath': f'{MOVIE_FOLDER}/{entry.name}/{best[0]}' if best else None,
+        'videoUrl': f'/storage/movie-video?movie={movie_id}' if best else None,
         'canPlayInline': bool(best) and best[0].rpartition('.')[2].lower() in INLINE_VIDEOS,
         'sizeBytes': best[1] if best else None,
         'addedAt': added,
@@ -2086,21 +2130,20 @@ def library_state():
     return last_run, review
 
 
-def movies_view():
-    folder = os.path.join(STORAGE_MOUNT, MOVIE_FOLDER)
-    last_run, review = library_state()
-    unavailable = {
-        'isAvailable': False,
-        'folder': MOVIE_FOLDER,
-        'movies': [],
-        'review': [],
-        'lastRun': last_run,
-    }
-    if not os.path.ismount(STORAGE_MOUNT) or os.path.islink(folder) or not os.path.isdir(folder):
-        return unavailable
+def movie_library():
+    """The movie folder: storage.json "movies", else MOVIE_FOLDER on this Pi's drive."""
+    return storage_settings().get('movies') or os.path.join(STORAGE_MOUNT, MOVIE_FOLDER)
+
+
+def scan_movies(root):
+    """Movie rows of a library folder, or None when it is not available."""
+    if root.startswith(STORAGE_MOUNT + '/') and not os.path.ismount(STORAGE_MOUNT):
+        return None
+    if os.path.islink(root) or not os.path.isdir(root):
+        return None
     movies = []
     try:
-        with os.scandir(folder) as entries:
+        with os.scandir(root) as entries:
             for entry in entries:
                 if len(movies) >= MAX_MOVIES:
                     break
@@ -2108,13 +2151,62 @@ def movies_view():
                 if row:
                     movies.append(row)
     except OSError:
-        return unavailable
+        return None
     movies.sort(key=lambda movie: (sort_key(movie['title']), movie['year']))
+    return movies
+
+
+_movie_scan = threading.Lock()
+_movie_cache = {}  # library root -> (monotonic time, movie rows or None)
+
+
+def is_local_library(root):
+    return root.startswith(STORAGE_MOUNT + '/')
+
+
+def refresh_movies(root):
+    """Scan one library into the cache; a scan already in progress (possibly stuck) is not repeated."""
+    if not _movie_scan.acquire(blocking=False):
+        return
+    try:
+        _movie_cache[root] = (time.monotonic(), scan_movies(root))
+    finally:
+        _movie_scan.release()
+
+
+def keep_movies_warm():
+    """Background refresh, so a slow network library answers from cache instead of making the phone wait."""
+    while True:
+        refresh_movies(movie_library())
+        time.sleep(MOVIE_NETWORK_CACHE_SECONDS - 60)
+
+
+def movies_view():
+    """The library for the app. Results are cached (a network library takes seconds to list),
+    and a library that stops answering never blocks the panel longer than MOVIE_SCAN_SECONDS."""
+    root = movie_library()
+    last_run, review = library_state()
+    if is_local_library(root) and not os.path.ismount(STORAGE_MOUNT):
+        cached = (0, None)
+    else:
+        cached = _movie_cache.get(root)
+        maximum_age = (
+            MOVIE_LOCAL_CACHE_SECONDS if is_local_library(root) else MOVIE_NETWORK_CACHE_SECONDS
+        )
+        if cached is None or time.monotonic() - cached[0] > maximum_age:
+            worker = threading.Thread(target=refresh_movies, args=(root,), daemon=True)
+            worker.start()
+            # Without a cached list, wait for this scan or for the warm-up scan already running.
+            deadline = time.monotonic() + MOVIE_SCAN_SECONDS
+            while cached is None and root not in _movie_cache and time.monotonic() < deadline:
+                time.sleep(0.1)
+            cached = _movie_cache.get(root, cached)
+    movies = cached[1] if cached else None
     return {
-        'isAvailable': True,
-        'folder': MOVIE_FOLDER,
-        'movies': movies,
-        'review': review,
+        'isAvailable': movies is not None,
+        'folder': os.path.basename(root),
+        'movies': movies or [],
+        'review': review if movies is not None else [],
         'lastRun': last_run,
     }
 
@@ -2125,12 +2217,89 @@ def sort_key(title):
     return ''.join(character for character in folded if not unicodedata.combining(character))
 
 
-def poster_path(movie_id):
-    """The folder.jpg of one movie folder inside the mounted library, or None."""
-    if not MOVIE_NAME.fullmatch(movie_id) or '/' in movie_id or len(movie_id) > 255:
+def eject_drive():
+    """Ask the root eject service to stop the drive's services, unmount and power it off."""
+    if not os.path.isfile(EJECT_SERVICE):
+        return {'status': 'unavailable', 'message': 'Ejecting is not set up on this LEÓN Home.'}
+    if not os.path.ismount(STORAGE_MOUNT):
+        return {'status': 'notMounted', 'message': 'The drive is not connected.'}
+    request, result = EJECT_REQUEST, EJECT_RESULT
+    try:
+        os.remove(result)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return {'status': 'failed', 'message': 'The drive could not be ejected.'}
+    try:
+        os.close(os.open(request, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o640))
+    except FileExistsError:
+        return {'status': 'busy', 'message': 'The drive is already being ejected.'}
+    except OSError:
+        return {'status': 'failed', 'message': 'The drive could not be ejected.'}
+    deadline = time.monotonic() + EJECT_SECONDS
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        try:
+            with open(result, encoding='utf-8') as handle:
+                answer = json.loads(handle.read(1024))
+        except (OSError, ValueError):
+            continue
+        if (
+            isinstance(answer, dict)
+            and answer.get('status') in EJECT_STATUSES
+            and isinstance(answer.get('message'), str)
+        ):
+            return {'status': answer['status'], 'message': answer['message'][:200]}
+    return {'status': 'failed', 'message': 'The drive could not be ejected.'}
+
+
+def movie_folder(movie_id):
+    """The real path of one `Title (Year)` folder inside the movie library, or None."""
+    if (
+        len(movie_id) > 255
+        or '/' in movie_id
+        or not visible(movie_id)
+        or not MOVIE_NAME.fullmatch(movie_id)
+    ):
         return None
-    resolved = storage_path(f'{MOVIE_FOLDER}/{movie_id}/folder.jpg')
-    return resolved[0] if resolved else None
+    root = os.path.realpath(movie_library())
+    if root.startswith(STORAGE_MOUNT + '/') and not os.path.ismount(STORAGE_MOUNT):
+        return None
+    folder = os.path.realpath(os.path.join(root, movie_id))
+    if os.path.dirname(folder) != root or not os.path.isdir(folder):
+        return None
+    return folder
+
+
+def poster_path(movie_id):
+    """The folder.jpg of one movie folder inside the movie library, or None."""
+    folder = movie_folder(movie_id)
+    path = folder and os.path.join(folder, 'folder.jpg')
+    return path if path and os.path.isfile(path) and not os.path.islink(path) else None
+
+
+def movie_video_path(movie_id):
+    """The largest video file of one movie folder, or None."""
+    folder = movie_folder(movie_id)
+    if folder is None:
+        return None
+    best = None
+    try:
+        with os.scandir(folder) as files:
+            for index, item in enumerate(files):
+                if index >= MAX_MOVIE_FILES:
+                    break
+                if (
+                    item.is_file(follow_symlinks=False)
+                    and visible(item.name)
+                    and item.name.rpartition('.')[2].lower() in MOVIE_VIDEOS
+                ):
+                    length = item.stat(follow_symlinks=False).st_size
+                    if best is None or length > best[1]:
+                        best = (item.path, length)
+    except OSError:
+        return None
+    return best[0] if best else None
 
 
 def files_view(relative, query=''):
@@ -2376,6 +2545,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             '/api/v1/automation',
             '/api/v1/movies',
             '/storage/poster',
+            '/storage/movie-video',
         ):
             return self.storage_get(path)
         if (
@@ -2460,6 +2630,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 else {}
             )
             return self.poster((query.get('movie') or [''])[0])
+        if path == '/storage/movie-video':
+            query = (
+                urllib.parse.parse_qs(self.path.partition('?')[2], max_num_fields=2)
+                if len(self.path) <= 2048
+                else {}
+            )
+            return self.send_file(movie_video_path((query.get('movie') or [''])[0]))
         if path == '/api/v1/automation':
             query = (
                 urllib.parse.parse_qs(self.path.partition('?')[2], max_num_fields=10)
@@ -2516,6 +2693,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path.startswith('/api/v1/network/') or self.path in (
             '/api/v1/automation/settings',
             '/api/v1/storage/password',
+            '/api/v1/storage/eject',
         ):
             origin, host = self.headers.get('Origin'), self.headers.get('Host')
             if (
@@ -2552,6 +2730,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.wake(login, length)
         if self.path == '/api/v1/storage/password':
             return self.storage_password(length)
+        if self.path == '/api/v1/storage/eject':
+            self.rfile.read(length)
+            answer = eject_drive()
+            return self.reply_json(200 if answer['status'] == 'ejected' else 409, answer)
         if self.path in ('/api/v1/dns/pause', '/api/v1/dns/resume'):
             return self.dns_blocking(login, length)
         # /network-map/port remains for the Mac app. The other /network-map/* actions
@@ -2989,10 +3171,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def download(self, relative):
         resolved = storage_path(relative)
+        return self.send_file(resolved[0] if resolved else None)
+
+    def send_file(self, path):
+        """Serve one already-resolved file with Range support, inline only for safe types."""
         try:
-            if resolved is None:
-                raise FileNotFoundError(relative)
-            handle = open(resolved[0], 'rb')
+            if path is None:
+                raise FileNotFoundError(path)
+            handle = open(path, 'rb')
         except OSError:
             return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
         with handle:
@@ -3008,7 +3194,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
                 return None
             start, end = selected or (0, length - 1)
-            name = os.path.basename(resolved[0])
+            name = os.path.basename(path)
             content_type = mimetypes.guess_type(name)[0] or 'application/octet-stream'
             disposition = 'inline' if content_type in INLINE_TYPES else 'attachment'
             if disposition == 'attachment':
@@ -3048,4 +3234,5 @@ class Handler(http.server.BaseHTTPRequestHandler):
 if __name__ == '__main__':
     signal.signal(signal.SIGTERM, save_internet_and_exit)
     threading.Thread(target=sampler, daemon=True).start()
+    threading.Thread(target=keep_movies_warm, daemon=True).start()
     http.server.ThreadingHTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
