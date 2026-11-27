@@ -1464,6 +1464,37 @@ def router_link(devices):
     return None
 
 
+# Devices actually used today; old randomized phone MACs would only add noise.
+UNNAMED_RECENT_SECONDS = 86400
+
+
+def setup_tasks(data, now):
+    """What the owner still has to do, most important first; empty once everything is set up."""
+    tasks = []
+    try:
+        telemetry = router_telemetry.read(now)
+    except (OSError, ValueError, KeyError, TypeError):
+        telemetry = {}
+    # Only a password setup can be finished from the phone; a vault phrase needs its installer.
+    if (
+        telemetry.get('status') in ('locked', 'error')
+        and telemetry.get('unlockBy') == 'password'
+        and not telemetry.get('isReconnecting')
+    ):
+        tasks.append({'kind': 'connectRouter'})
+    unnamed = sum(
+        1
+        for device in data.get('devices') or []
+        if device.get('mac')
+        and not device.get('label')
+        and device.get('role') != 'router'
+        and now - (device.get('lastSeen') or 0) < UNNAMED_RECENT_SECONDS
+    )
+    if unnamed:
+        tasks.append({'kind': 'nameDevices', 'count': min(unnamed, 999)})
+    return tasks
+
+
 def home_view(data, *, now=None):
     """The bounded HomeView wire contract, from the same sampler snapshot as the map."""
     now = time.time() if now is None else now
@@ -1579,6 +1610,7 @@ def home_view(data, *, now=None):
         },
         'tablet': tablet_view(data, now),
         'links': {'piholeAdmin': '/admin/', 'routerSettings': router_link(devices)},
+        'tasks': setup_tasks(data, now),
     }
 
 

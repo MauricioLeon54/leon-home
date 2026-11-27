@@ -8,6 +8,7 @@ import { type NetworkActions, networkSection, tailscaleSection } from './network
 import { backupsSection, linksSection, tabletSection } from './other.js';
 import { type PiHoleActions, piholeSection } from './pihole.js';
 import { internetSection, statusSection } from './status.js';
+import { tasksSection } from './tasks.js';
 
 export interface HomeActions {
   pihole: PiHoleActions;
@@ -19,9 +20,11 @@ export function homeSections(view: HomeView, context: HomeContext, actions: Home
   if (view.observedAt === null) {
     return [emptyState({ title: t('Preparing readings…'), detail: t('The first sample takes a few seconds.') }), linksSection(view)];
   }
-  const tablet = tabletSection(view);
+  const tablet = tabletSection(view),
+    tasks = tasksSection(view);
   return [
     statusSection(view, context),
+    ...(tasks ? [tasks] : []),
     internetSection(view, context),
     piholeSection(view, context, actions.pihole),
     h('div', { className: 'pair' }, [piSection(view, context), servicesSection(view)]),

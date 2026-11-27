@@ -1,4 +1,4 @@
-import { address, boolean, items, list, nullable, nullableNumber, number, oneOf, record, string } from '../decode.js';
+import { address, boolean, items, list, nullable, nullableNumber, number, oneOf, optionalList, record, string } from '../decode.js';
 
 /**
  * GET /api/v1/home — the Home tab view model. This file is the wire contract: overview.py's
@@ -49,7 +49,11 @@ export interface HomeView {
   };
   tablet: TabletView | null; // null: no tablet configured and no reading
   links: { piholeAdmin: string; routerSettings: string | null }; // routerSettings: http://<private IPv4>/
+  tasks: Array<SetupTask>; // ≤ 4, most important first; empty once everything is set up
 }
+
+/** Something the owner still has to do; the client words it and links to where it is done. */
+export type SetupTask = { kind: 'connectRouter' } | { kind: 'nameDevices'; count: number };
 
 export interface PiHoleView {
   blocking: 'enabled' | 'paused';
@@ -225,5 +229,11 @@ export function parseHome(value: unknown): HomeView {
     },
     tablet: nullable(root.tablet, parseTablet),
     links: parseLinks(root.links),
+    tasks: optionalList(root.tasks, 4).map(parseTask),
   };
+}
+function parseTask(value: unknown): SetupTask {
+  const root = record(value),
+    kind = oneOf(root.kind, ['connectRouter', 'nameDevices']);
+  return kind === 'connectRouter' ? { kind } : { kind, count: number(root.count, 1, 999) };
 }

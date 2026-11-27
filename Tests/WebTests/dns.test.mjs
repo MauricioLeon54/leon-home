@@ -69,13 +69,13 @@ function filtering(allowed = [], paused = false) {
   };
 }
 
-async function start(browserType, answer) {
+async function start(browserType, answer, tasks = []) {
   const browser = await browserType.launch();
   const context = await browser.newContext({ serviceWorkers: 'block', reducedMotion: 'reduce', viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
   const errors = [],
     posts = [],
-    state = { allowed: [], paused: false };
+    state = { allowed: [], paused: false, tasks };
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => {
     if (message.type() === 'error' && !message.text().includes('Failed to load resource')) errors.push(message.text());
@@ -102,7 +102,8 @@ async function start(browserType, answer) {
       const name = pathname.slice('/assets/'.length);
       return route.fulfill({ contentType: name.endsWith('.css') ? 'text/css' : 'text/javascript', body: await readFile(new URL(name, directory)) });
     }
-    if (pathname.startsWith('/settings')) return route.fulfill({ contentType: 'text/html', headers: { 'Content-Security-Policy': policy }, body: shell });
+    if (pathname === '/leon/v1/home') return json({ ...homeView(), tasks: state.tasks ?? [] });
+    if (pathname === '/' || pathname.startsWith('/settings')) return route.fulfill({ contentType: 'text/html', headers: { 'Content-Security-Policy': policy }, body: shell });
     return route.fulfill({ status: 404 });
   });
   return {
@@ -159,6 +160,19 @@ for (const browserType of [chromium, webkit]) {
       assert.deepEqual(app.errors, []);
     } finally {
       await app.close();
+    }
+  });
+
+  test(`${browserType.name()} Home lists pending setup and links to where it is done`, async () => {
+    const home = await start(browserType, () => 'applied', [{ kind: 'connectRouter' }, { kind: 'nameDevices', count: 3 }]);
+    try {
+      await home.page.goto('https://leon.test/');
+      await home.page.getByText('2 to do').waitFor();
+      assert.equal(await home.page.getByRole('link', { name: /Connect your router/ }).getAttribute('href'), '/network');
+      assert.equal(await home.page.getByRole('link', { name: /Name 3 devices/ }).getAttribute('href'), '/network');
+      assert.deepEqual(home.errors, []);
+    } finally {
+      await home.close();
     }
   });
 
