@@ -209,34 +209,69 @@ DAILY_FACTS_EVERY = 900
 # ---------------------------------------------------------------- data sources
 
 
+_pihole_sid = None  # one shared API session, kept in memory only
+_pihole_login = threading.Lock()
+
+
 class PiHole:
-    """One short API session with the application password; always logged out."""
+    """API access with one reused session for the application password.
+
+    Pi-hole hashes the password on every login (about 1 CPU-s on a Pi 4), so logging in for each
+    30 s sample was most of pihole-FTL's CPU. The session stays alive because the sampler uses it
+    well within Pi-hole's idle timeout; a rejected (expired or revoked) session logs in once again.
+    """
 
     def __init__(self):
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.sid = None
 
-    def call(self, method, path, body=None):
+    def send(self, method, path, body=None, sid=None):
         # Fixed loopback Pi-hole HTTP origin and internal API paths.
         request = urllib.request.Request(  # noqa: S310
             PIHOLE + path,
             method=method,
             data=None if body is None else json.dumps(body).encode(),
-            headers={'Content-Type': 'application/json', **({'sid': self.sid} if self.sid else {})},
+            headers={'Content-Type': 'application/json', **({'sid': sid} if sid else {})},
         )
         with self.opener.open(request, timeout=5) as response:
             raw = response.read(1_048_576)
             return json.loads(raw) if raw else {}
 
+    def login(self, rejected=None):
+        """Shared session; only a caller whose session was rejected replaces it."""
+        global _pihole_sid
+        with _pihole_login:
+            if _pihole_sid is None or _pihole_sid == rejected:
+                with open(PIHOLE_PASSWORD_FILE, encoding='utf-8') as handle:
+                    password = handle.read().strip()
+                _pihole_sid = None
+                _pihole_sid = self.send('POST', '/api/auth', {'password': password})['session'][
+                    'sid'
+                ]
+            self.sid = _pihole_sid
+
+    def call(self, method, path, body=None):
+        try:
+            return self.send(method, path, body, self.sid)
+        except urllib.error.HTTPError as error:
+            if error.code != 401:
+                raise
+        self.login(rejected=self.sid)
+        return self.send(method, path, body, self.sid)
+
     def __enter__(self):
-        with open(PIHOLE_PASSWORD_FILE, encoding='utf-8') as handle:
-            password = handle.read().strip()
-        self.sid = self.call('POST', '/api/auth', {'password': password})['session']['sid']
+        self.login()
         return self
 
     def __exit__(self, *exc):
+        return None
+
+
+def end_pihole_session():
+    """Best effort on shutdown; Pi-hole's own idle timeout bounds a session that is not ended."""
+    if _pihole_sid:
         try:
-            self.call('DELETE', '/api/auth')
+            PiHole().send('DELETE', '/api/auth', sid=_pihole_sid)
         except (OSError, ValueError):
             pass
 
@@ -871,6 +906,7 @@ def save_internet_and_exit(signum, frame):
         internet_health.save(INTERNET_STATE, list(_internet))
     except OSError:
         pass
+    end_pihole_session()
     raise SystemExit(0)
 
 
