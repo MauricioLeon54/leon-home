@@ -29,3 +29,5 @@ export const setDnsBlocking = (enabled: boolean, token: string): Promise<SwitchO
 export const allowDomain = (domain: string, token: string): Promise<SwitchOutcome> => run(() => postAction('/api/v1/dns/allow', { domain }, token), t('{0} unblocked', domain));
 export const removeAllowedDomain = (domain: string, token: string): Promise<SwitchOutcome> =>
   run(() => postAction('/api/v1/dns/unallow', { domain }, token), t('{0} follows the blocklists again', domain));
+export const setDeviceFilter = (address: string, name: string, paused: boolean, token: string): Promise<SwitchOutcome> =>
+  run(() => postAction('/api/v1/dns/device-filter', { address, paused }, token), paused ? t('Filtering paused for {0}', name) : t('Filtering resumed for {0}', name));

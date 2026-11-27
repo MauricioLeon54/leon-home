@@ -693,6 +693,47 @@ def record_internet(data):
 _daily_facts_at = 0
 
 
+_week_blocking = (0.0, None)  # (computed at, weekly totals); the 7-day query takes seconds
+
+
+def top_blocked_devices(clients):
+    return [
+        {'name': client_label(client), 'blocked': int(client.get('count') or 0)}
+        for client in clients[:3]
+    ]
+
+
+def ad_block_facts(data, now):
+    """Names and counts for the daily push: today's blocking and, refreshed every 6 h, the week."""
+    global _week_blocking
+    dns = data.get('dns') or {}
+    try:
+        with PiHole() as api:
+            top = api.call('GET', '/api/stats/top_clients?blocked=true&count=3')['clients']
+            if now - _week_blocking[0] >= 6 * 3600:
+                span = f'from={int(now) - 7 * 86400}&until={int(now)}'
+                summary = api.call('GET', f'/api/stats/database/summary?{span}')
+                week_top = api.call(
+                    'GET', f'/api/stats/database/top_clients?{span}&blocked=true&count=3'
+                )['clients']
+                _week_blocking = (
+                    now,
+                    {
+                        'queries': int(summary['sum_queries']),
+                        'blocked': int(summary['sum_blocked']),
+                        'topDevices': top_blocked_devices(week_top),
+                    },
+                )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return {
+        'queries': dns.get('queries'),
+        'blocked': dns.get('blocked'),
+        'topDevices': top_blocked_devices(top),
+        'week': _week_blocking[1],
+    }
+
+
 def record_daily_facts(data):
     """Every 15 min: names-only facts for the daily push, which runs as another user."""
     global _daily_facts_at
@@ -703,6 +744,7 @@ def record_daily_facts(data):
         facts = internet_health.daily_facts(
             network_map.snapshot(data, now), now
         )  # sample() attached identity
+        facts['adBlock'] = ad_block_facts(data, now)
         internet_health.save_json(DAILY_FACTS, facts)
         _daily_facts_at = now
     except (OSError, ValueError, KeyError, TypeError) as error:
@@ -827,7 +869,7 @@ def save_internet_and_exit(signum, frame):
 def sampler():
     load_temperatures()
     _internet.extend(internet_health.load(INTERNET_STATE, time.time()))
-    monitoring_at = 0
+    monitoring_at = expiry_at = 0
     while True:
         started = time.time()
         sampling_since = time.monotonic()
@@ -836,6 +878,9 @@ def sampler():
             record_temperature(data['host'].get('temperatureCelsius'))
             record_internet(data)
             monitoring_at = refresh_monitoring_facts(data, started, monitoring_at)
+            if started - expiry_at >= 60:
+                expire_device_filters(started)
+                expiry_at = started
             with _lock:
                 if data['dns'] and _dns_last_control and _dns_last_control[0] >= sampling_since:
                     data['dns'].update(_dns_last_control[1])
@@ -964,6 +1009,7 @@ def dns_details():
             groups = api.call('GET', '/api/groups')['groups']
             clients = api.call('GET', '/api/clients')['clients']
             gravity = api.call('GET', '/api/stats/summary')['gravity']
+            activity = api.call('GET', '/api/history/clients?N=0')['clients']
         names = {group['id']: str(group['name'])[:60] for group in groups}
         sources = {PANEL_ALLOW_COMMENT: 'panel', SELF_REPAIR_ALLOW_COMMENT: 'selfRepair'}
         return {
@@ -1004,9 +1050,124 @@ def dns_details():
                 for entry in lists
             ][:40],
             'listsUpdatedAt': gravity.get('last_update') or None,
+            'devices': filter_devices(activity, clients, time.time()),
         }
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
+
+
+# A device's filter pause is a Pi-hole client entry for its IP in a group without lists. Pi-hole
+# matches an IP entry before a MAC one, so removing the entry restores the device's usual groups.
+BYPASS_GROUP = 'LEÓN filter paused'
+BYPASS_PREFIX = 'LEÓN filter paused until '
+BYPASS_SECONDS = 1800
+BYPASS_UNTIL = re.compile(r'\((\d{9,11})\)\Z')
+
+
+def bypass_until(entry):
+    """The pause end of a client entry this panel created, else None (an owner's own entry)."""
+    comment = str(entry.get('comment') or '')
+    match = BYPASS_UNTIL.search(comment) if comment.startswith(BYPASS_PREFIX) else None
+    return int(match.group(1)) if match else None
+
+
+def is_filter_device(address):
+    try:
+        parsed = ipaddress.IPv4Address(address)
+    except ValueError:
+        return False
+    return parsed.is_private or parsed in ipaddress.IPv4Network('100.64.0.0/10')
+
+
+def device_filter_path(address):
+    return '/api/clients/' + urllib.parse.quote(address, safe='')
+
+
+def first_entry(api, path, key):
+    """The one item at a Pi-hole path, or None when it does not exist (empty or 404)."""
+    try:
+        return (api.call('GET', path).get(key) or [None])[0]
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        raise
+
+
+def bypass_group(api):
+    path = '/api/groups/' + urllib.parse.quote(BYPASS_GROUP, safe='')
+    group = first_entry(api, path, 'groups')
+    if group is None:
+        comment = 'Devices whose filtering is paused from the LEÓN panel; no lists.'
+        api.call('POST', '/api/groups', {'name': BYPASS_GROUP, 'comment': comment, 'enabled': True})
+        group = first_entry(api, path, 'groups')
+    return group['id']
+
+
+def set_device_filter(address, paused, now=None):
+    """Pause one device's filtering for BYPASS_SECONDS, or resume it; verified by readback."""
+    if not _dns_action_lock.acquire(blocking=False):
+        return 409, {'status': 'refused', 'message': 'Another DNS change is in progress.'}
+    path = device_filter_path(address)
+    try:
+        with PiHole() as api:
+            current = first_entry(api, path, 'clients')
+            if current is not None and bypass_until(current) is None:
+                return 200, {
+                    'status': 'refused',
+                    'message': 'This device has its own Pi-hole rule; change it in Pi-hole.',
+                }
+            if paused:
+                until = int(now or time.time()) + BYPASS_SECONDS
+                stamp = time.strftime('%H:%M', time.localtime(until))
+                entry = {
+                    'comment': f'{BYPASS_PREFIX}{stamp} ({until})',
+                    'groups': [bypass_group(api)],
+                }
+                if current is None:
+                    api.call('POST', '/api/clients', {'client': address, **entry})
+                else:
+                    api.call('PUT', path, entry)
+            elif current is not None:
+                api.call('DELETE', path)
+            after = first_entry(api, path, 'clients')
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        return 503, {'status': 'unavailable', 'message': 'Pi-hole did not acknowledge the change.'}
+    finally:
+        _dns_action_lock.release()
+    if (after is not None and bypass_until(after) is not None) == paused:
+        return 200, {'status': 'applied', 'message': 'Pi-hole confirmed the change.'}
+    return 200, {'status': 'unverified', 'message': 'Pi-hole did not confirm the change.'}
+
+
+def expire_device_filters(now):
+    """Remove expired pauses this panel created. Best effort; the next minute retries."""
+    try:
+        with PiHole() as api:
+            for entry in api.call('GET', '/api/clients')['clients']:
+                until = bypass_until(entry)
+                if until is not None and until <= now:
+                    api.call('DELETE', device_filter_path(str(entry['client'])))
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f'filter pause expiry failed: {type(error).__name__}', file=sys.stderr, flush=True)
+
+
+def filter_devices(clients, entries, now):
+    """The 20 busiest Pi-hole clients of the last day, with any pause this panel set."""
+    paused = {str(e.get('client')): bypass_until(e) for e in entries if bypass_until(e)}
+    owned = {str(e.get('client')) for e in entries if bypass_until(e) is None}
+    rows = [
+        {
+            'address': address,
+            'name': client_label({'name': value.get('name'), 'ip': address}),
+            'queries': int(value.get('total') or 0),
+            'pausedUntil': paused.get(address) if (paused.get(address) or 0) > now else None,
+            'canPause': address not in owned,
+        }
+        for address, value in clients.items()
+        if is_filter_device(address) and isinstance(value, dict)
+    ]
+    rows.sort(key=lambda row: (row['pausedUntil'] is None, -row['queries']))
+    return rows[:20]
 
 
 def change_allowlist(domain, allow):
@@ -2976,6 +3137,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.dns_blocking(length)
         if self.path in ('/api/v1/dns/allow', '/api/v1/dns/unallow'):
             return self.dns_allowlist(length)
+        if self.path == '/api/v1/dns/device-filter':
+            return self.dns_device_filter(length)
         # /network-map/port remains for the Mac app. The other /network-map/* actions
         # are deprecated aliases of /api/v1/network/* until external clients migrate.
         if self.path in ('/network-map/port', '/api/v1/network/port'):
@@ -3082,6 +3245,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (ValueError, UnicodeError, RecursionError):
             return self.reply_json(400, {'status': 'invalid', 'message': 'Invalid domain.'})
         return self.reply_json(*change_allowlist(domain, self.path == '/api/v1/dns/allow'))
+
+    def dns_device_filter(self, length):
+        try:
+            content_type = (self.headers.get('Content-Type') or '').split(';', 1)[0].strip()
+            if content_type != 'application/json':
+                raise ValueError
+            request = json.loads(self.rfile.read(length))
+            if not isinstance(request, dict) or set(request) != {'address', 'paused'}:
+                raise ValueError
+            address, paused = request['address'], request['paused']
+            if type(paused) is not bool or not isinstance(address, str):
+                raise ValueError
+            if not is_filter_device(address) or str(ipaddress.IPv4Address(address)) != address:
+                raise ValueError
+        except (ValueError, UnicodeError, RecursionError):
+            return self.reply_json(400, {'status': 'invalid', 'message': 'Invalid device.'})
+        return self.reply_json(*set_device_filter(address, paused))
 
     def automation_settings_json(self, login):
         try:

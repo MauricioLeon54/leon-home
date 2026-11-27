@@ -1,4 +1,4 @@
-import { items, nullable, number, oneOf, record, string } from '../decode.js';
+import { address, boolean, items, nullable, number, oneOf, record, string } from '../decode.js';
 import { type HomeView, parseHome } from './home.js';
 
 /**
@@ -17,6 +17,7 @@ export interface FilteringView {
   groups: Array<{ name: string; devices: Array<string> }>; // ≤ 20, groups other than Default
   lists: Array<{ name: string; entries: number; state: ListState; updatedAt: number | null; groups: Array<string> }>; // ≤ 40
   listsUpdatedAt: number | null;
+  devices: Array<{ address: string; name: string; queries: number; pausedUntil: number | null; canPause: boolean }>; // ≤ 20, paused first
 }
 
 const MAX_UNIX_SECONDS = 4_102_444_800;
@@ -48,6 +49,10 @@ function parseFiltering(value: unknown): FilteringView {
       };
     }),
     listsUpdatedAt: nullable(root.listsUpdatedAt, seconds),
+    devices: items(root.devices, 20, item => {
+      const row = record(item);
+      return { address: address(row.address), name: string(row.name, 100), queries: number(row.queries, 0, 1e12), pausedUntil: nullable(row.pausedUntil, seconds), canPause: boolean(row.canPause) };
+    }),
   };
 }
 

@@ -1,6 +1,6 @@
 import type { AllowSource, FilteringView, ListState } from '../../contracts/dns.js';
 import { h } from '../../core/dom.js';
-import { ago, count } from '../../core/format.js';
+import { ago, clock, count } from '../../core/format.js';
 import { t } from '../../i18n/index.js';
 import { button } from '../../ui/button.js';
 import { confirm } from '../../ui/confirm.js';
@@ -13,6 +13,7 @@ export interface FilteringActions {
   isBusy: boolean;
   allow: (domain: string) => void;
   removeAllowed: (domain: string) => void;
+  setDeviceFilter: (address: string, name: string, paused: boolean) => void;
 }
 
 const SOURCE_TEXT = {
@@ -86,6 +87,33 @@ function unblockForm(actions: FilteringActions): HTMLElement {
   return card([form, h('p', { className: 'note', text: t('If a site or app stops working, unblock it here or from the recent list below.') })]);
 }
 
+function deviceRows(filtering: FilteringView, actions: FilteringActions): Array<ListRow> {
+  return filtering.devices.map(device => {
+    const isPaused = device.pausedUntil !== null;
+    if (!device.canPause) return { kind: 'value', title: device.name, detail: t('Has its own Pi-hole rule'), value: count(device.queries) };
+    return {
+      kind: 'action',
+      leading: { kind: 'dot', tone: isPaused ? 'warn' : 'good' },
+      title: device.name,
+      detail: isPaused ? t('Filtering paused until {0}', clock(device.pausedUntil)) : t('{0} requests today', count(device.queries)),
+      value: isPaused ? t('Resume') : t('Pause 30 min'),
+      isDisabled: actions.isBusy,
+      onSelect: () => void confirmDeviceFilter(device.address, device.name, !isPaused, actions),
+    };
+  });
+}
+
+async function confirmDeviceFilter(address: string, name: string, paused: boolean, actions: FilteringActions): Promise<void> {
+  const isConfirmed =
+    !paused ||
+    (await confirm({
+      title: t('Pause filtering for {0}?', name),
+      message: t('Ads and trackers reach only this device for 30 minutes. Filtering then returns by itself.'),
+      confirmLabel: t('Pause 30 min'),
+    }));
+  if (isConfirmed) actions.setDeviceFilter(address, name, paused);
+}
+
 export function filteringSections(filtering: FilteringView | null, actions: FilteringActions): Array<HTMLElement> {
   if (filtering === null)
     return [section({ title: t('Filtering'), meta: t('No reading'), tone: 'warn' }, [emptyState({ title: t('Pi-hole did not answer'), detail: t('Lists and recent blocks appear when it does.') })])];
@@ -114,6 +142,12 @@ export function filteringSections(filtering: FilteringView | null, actions: Filt
     section({ title: t('Unblocked sites'), meta: count(allowedRows.length) }, [
       allowedRows.length === 0 ? emptyState({ title: t('No unblocked sites'), detail: t('Every request follows the blocklists.') }) : list(allowedRows),
     ]),
+    filtering.devices.length === 0
+      ? null
+      : section({ title: t('Pause filtering for a device') }, [
+          list(deviceRows(filtering, actions)),
+          h('p', { className: 'note', text: t('Use it when an app or game misbehaves on one device; the rest of the home stays filtered.') }),
+        ]),
     filtering.groups.length === 0
       ? null
       : section({ title: t('Device filters') }, [

@@ -4,7 +4,7 @@ import { t } from '../../i18n/index.js';
 import { list } from '../../ui/list.js';
 import { section } from '../../ui/section.js';
 import type { SwitchOutcome } from '../../ui/switch.js';
-import { allowDomain, pauseDns, removeAllowedDomain, setDnsBlocking } from '../home/dnsActions.js';
+import { allowDomain, pauseDns, removeAllowedDomain, setDeviceFilter, setDnsBlocking } from '../home/dnsActions.js';
 import { piholeSection } from '../home/pihole.js';
 import { filteringSections } from './filtering.js';
 import { livePage } from './livePage.js';
@@ -44,6 +44,7 @@ export function renderDns(context: RouteContext): PageView {
           isBusy: busy,
           allow: domain => void run(() => allowDomain(domain, token)),
           removeAllowed: domain => void run(() => removeAllowedDomain(domain, token)),
+          setDeviceFilter: (address, name, paused) => void run(() => setDeviceFilter(address, name, paused, token)),
         }),
         section({}, [list([{ kind: 'navigation', title: t('Pi-hole admin'), detail: t('Lists, queries and settings'), href: view.links.piholeAdmin }])]),
       ];

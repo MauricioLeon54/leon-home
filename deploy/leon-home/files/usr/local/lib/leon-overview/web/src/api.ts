@@ -113,6 +113,7 @@ interface ActionRequests extends HardwareActions, NetworkActions {
   '/api/v1/dns/disable': Record<string, never>;
   '/api/v1/dns/allow': { domain: string };
   '/api/v1/dns/unallow': { domain: string };
+  '/api/v1/dns/device-filter': { address: string; paused: boolean };
 }
 async function send(path: string, body: unknown, token: string): Promise<{ httpStatus: number; ok: boolean; outcome: string; message: string; data: Record<string, unknown> }> {
   const controller = new AbortController(),

@@ -51,7 +51,7 @@ function homeView(overrides = {}) {
   };
 }
 
-function filtering(allowed = []) {
+function filtering(allowed = [], paused = false) {
   const now = Math.floor(Date.now() / 1000);
   return {
     recentBlocked: [{ domain: 'ads.example.test', device: 'tv', at: now - 60, count: 3 }],
@@ -62,6 +62,10 @@ function filtering(allowed = []) {
       { name: 'Samsung trackers', entries: 201, state: 'cached', updatedAt: now - 3600, groups: ['TV'] },
     ],
     listsUpdatedAt: now - 3600,
+    devices: [
+      { address: '192.168.1.50', name: 'tv', queries: 540, pausedUntil: paused ? now + 1800 : null, canPause: true },
+      { address: '192.168.1.20', name: 'mac', queries: 9, pausedUntil: null, canPause: false },
+    ],
   };
 }
 
@@ -71,7 +75,7 @@ async function start(browserType, answer) {
   const page = await context.newPage();
   const errors = [],
     posts = [],
-    state = { allowed: [] };
+    state = { allowed: [], paused: false };
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => {
     if (message.type() === 'error' && !message.text().includes('Failed to load resource')) errors.push(message.text());
@@ -81,7 +85,13 @@ async function start(browserType, answer) {
       { pathname } = new URL(request.url());
     const json = body => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
     if (pathname === '/leon/v1/session') return json(session);
-    if (pathname === '/leon/v1/dns') return json({ ...homeView(), filtering: filtering(state.allowed) });
+    if (pathname === '/leon/v1/dns') return json({ ...homeView(), filtering: filtering(state.allowed, state.paused) });
+    if (pathname === '/leon/v1/dns/device-filter') {
+      posts.push({ path: pathname, token: request.headers()['x-leon-token'], body: request.postDataJSON() });
+      const status = answer(pathname);
+      if (status === 'applied') state.paused = request.postDataJSON().paused;
+      return json({ status });
+    }
     if (pathname === '/leon/v1/dns/allow' || pathname === '/leon/v1/dns/unallow') {
       posts.push({ path: pathname, token: request.headers()['x-leon-token'], body: request.postDataJSON() });
       const status = answer(pathname);
@@ -123,6 +133,29 @@ for (const browserType of [chromium, webkit]) {
         { path: '/leon/v1/dns/allow', token: 'token-fixture', body: { domain: 'ads.example.test' } },
         { path: '/leon/v1/dns/unallow', token: 'token-fixture', body: { domain: 'ads.example.test' } },
       ]);
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test(`${browserType.name()} pausing one device asks first and resuming does not`, async () => {
+    const app = await start(browserType, () => 'applied');
+    try {
+      await app.page.goto('https://leon.test/settings/dns');
+      await app.page.getByRole('button', { name: /tv.*Pause 30 min/ }).click();
+      await app.page.getByRole('button', { name: 'Pause 30 min', exact: true }).last().click();
+      await app.page.getByText(/Filtering paused until/).waitFor();
+      await app.page.getByRole('button', { name: /tv.*Resume/ }).click();
+      await app.page.getByText('540 requests today').waitFor();
+      assert.equal(await app.page.getByText('Has its own Pi-hole rule').count(), 1);
+      assert.deepEqual(
+        app.posts.map(post => post.body),
+        [
+          { address: '192.168.1.50', paused: true },
+          { address: '192.168.1.50', paused: false },
+        ]
+      );
       assert.deepEqual(app.errors, []);
     } finally {
       await app.close();
