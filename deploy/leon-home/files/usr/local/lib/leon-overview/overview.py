@@ -339,6 +339,14 @@ def tailnet():
         peers.append(
             {
                 'name': (peer.get('DNSName') or peer.get('HostName') or '?').split('.')[0],
+                'address': next(
+                    (
+                        ip
+                        for ip in peer.get('TailscaleIPs') or []
+                        if isinstance(ip, str) and '.' in ip
+                    ),
+                    None,
+                ),
                 'os': peer.get('OS', ''),
                 'online': bool(peer.get('Online')),
                 'direct': bool(peer.get('CurAddr')),
@@ -983,8 +991,23 @@ def list_state(entry):
     return 'cached' if entry.get('status') == 3 else 'failed'
 
 
-def recent_blocked(queries, limit=30):
+def device_names(data):
+    """Address → the name a person knows: Tailscale names, overridden by LAN labels."""
+    names = {p['address']: p['name'] for p in data.get('peers') or [] if p.get('address')}
+    names.update(
+        {d['ip']: d['label'] for d in data.get('devices') or [] if d.get('label') and d.get('ip')}
+    )
+    return names
+
+
+def named_client(client, names):
+    address = client.get('ip') if isinstance(client, dict) else None
+    return names.get(address) or client_label(client)
+
+
+def recent_blocked(queries, limit=30, names=None):
     """Unique blocked domains, newest first, with the device that asked last."""
+    names = names or {}
     recent = {}
     for row in queries:
         domain, at = row.get('domain'), row.get('time')
@@ -995,11 +1018,11 @@ def recent_blocked(queries, limit=30):
         entry = recent.setdefault(domain, {'domain': domain, 'device': '', 'at': 0, 'count': 0})
         entry['count'] += 1
         if at > entry['at']:
-            entry['at'], entry['device'] = at, client_label(row.get('client'))
+            entry['at'], entry['device'] = at, named_client(row.get('client'), names)
     return sorted(recent.values(), key=lambda entry: -entry['at'])[:limit]
 
 
-def dns_details():
+def dns_details(names=None):
     """The filtering page: recent blocks, allowlist, device groups and list health; None if down."""
     try:
         with PiHole() as api:
@@ -1013,7 +1036,7 @@ def dns_details():
         names = {group['id']: str(group['name'])[:60] for group in groups}
         sources = {PANEL_ALLOW_COMMENT: 'panel', SELF_REPAIR_ALLOW_COMMENT: 'selfRepair'}
         return {
-            'recentBlocked': recent_blocked(queries),
+            'recentBlocked': recent_blocked(queries, names=names),
             'allowed': [
                 {
                     'domain': entry['domain'],
@@ -1050,7 +1073,7 @@ def dns_details():
                 for entry in lists
             ][:40],
             'listsUpdatedAt': gravity.get('last_update') or None,
-            'devices': filter_devices(activity, clients, time.time()),
+            'devices': filter_devices(activity, clients, time.time(), names),
         }
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
@@ -1151,20 +1174,25 @@ def expire_device_filters(now):
         print(f'filter pause expiry failed: {type(error).__name__}', file=sys.stderr, flush=True)
 
 
-def filter_devices(clients, entries, now):
-    """The 20 busiest Pi-hole clients of the last day, with any pause this panel set."""
+def filter_devices(clients, entries, now, names=None):
+    """The 20 busiest Pi-hole clients of the last day, with any pause this panel set. This Pi
+    itself (loopback, `pi.hole`) is left out: pausing it would only affect its own lookups."""
+    names = names or {}
     paused = {str(e.get('client')): bypass_until(e) for e in entries if bypass_until(e)}
     owned = {str(e.get('client')) for e in entries if bypass_until(e) is None}
     rows = [
         {
             'address': address,
-            'name': client_label({'name': value.get('name'), 'ip': address}),
+            'name': named_client({'name': value.get('name'), 'ip': address}, names),
             'queries': int(value.get('total') or 0),
             'pausedUntil': paused.get(address) if (paused.get(address) or 0) > now else None,
             'canPause': address not in owned,
         }
         for address, value in clients.items()
-        if is_filter_device(address) and isinstance(value, dict)
+        if is_filter_device(address)
+        and isinstance(value, dict)
+        and not address.startswith('127.')
+        and value.get('name') not in ('pi.hole', 'localhost')
     ]
     rows.sort(key=lambda row: (row['pausedUntil'] is None, -row['queries']))
     return rows[:20]
@@ -2972,8 +3000,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply_json(200, view)
         if path == '/api/v1/dns':
             with _lock:
-                view = home_view(_data)
-            return self.reply_json(200, {**view, 'filtering': dns_details()})
+                view, names = home_view(_data), device_names(_data)
+            return self.reply_json(200, {**view, 'filtering': dns_details(names)})
         if path == '/api/v1/hardware':
             with _lock:
                 data = dict(_data)
