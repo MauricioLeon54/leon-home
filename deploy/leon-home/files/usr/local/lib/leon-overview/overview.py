@@ -1022,7 +1022,7 @@ def recent_blocked(queries, limit=30, names=None):
     return sorted(recent.values(), key=lambda entry: -entry['at'])[:limit]
 
 
-def dns_details(names=None):
+def dns_details(device_labels=None):
     """The filtering page: recent blocks, allowlist, device groups and list health; None if down."""
     try:
         with PiHole() as api:
@@ -1036,7 +1036,7 @@ def dns_details(names=None):
         names = {group['id']: str(group['name'])[:60] for group in groups}
         sources = {PANEL_ALLOW_COMMENT: 'panel', SELF_REPAIR_ALLOW_COMMENT: 'selfRepair'}
         return {
-            'recentBlocked': recent_blocked(queries, names=names),
+            'recentBlocked': recent_blocked(queries, names=device_labels),
             'allowed': [
                 {
                     'domain': entry['domain'],
@@ -1073,7 +1073,7 @@ def dns_details(names=None):
                 for entry in lists
             ][:40],
             'listsUpdatedAt': gravity.get('last_update') or None,
-            'devices': filter_devices(activity, clients, time.time(), names),
+            'devices': filter_devices(activity, clients, time.time(), device_labels),
         }
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
