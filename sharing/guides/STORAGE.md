@@ -126,20 +126,73 @@ configuration and service dependencies before changing them.
 
 ## Play videos on a TV in the home
 
-Smart TVs cannot join Tailscale, so they cannot use the Samba share. `minidlna` publishes a
+Smart TVs cannot join Tailscale, so they cannot use the Samba share. Gerbera publishes a
 read-only video folder to the home network over DLNA without transcoding. Files must already
-use formats the TV plays, such as H.264 or H.265 with AAC or AC3 audio.
+use formats the TV plays, such as H.264 or H.265 with AAC or AC3 audio. TVs see one
+**Películas** folder with every video and, when the movie folder has a `folder.jpg`, its
+full-size poster (`upnp:albumArtURI`, which VLC also reads) and the LEÓN icon.
 
-1. Mask `minidlna.service` before installing the `minidlna` package.
-2. In `/etc/minidlna.conf`, set `media_dir=V,/srv/leon-storage/VIDEO_FOLDER`,
-   `network_interface=` to the Pi's wired or Wi-Fi interface on the home network, `inotify=yes`
-   and a `friendly_name`. Tailscale grants keep port 8200 closed to other tailnet devices.
-3. Add a drop-in for `minidlna.service` with `BindsTo=srv-leon\x2dstorage.mount`, the matching
-   `After=` and `ConditionPathIsMountPoint=/srv/leon-storage`, then unmask, enable and start it.
-4. Check `http://PI_LAN_ADDRESS:8200/` for the indexed file count. Files reported as
-   "Unsuccessful getting details" in `journalctl -u minidlna` are usually damaged or incomplete.
-5. On the TV, open the media player app or VLC → Local network and select the server.
+1. Mask `gerbera.service`, then install the `gerbera` package, so it never starts with its
+   default configuration.
+2. Generate the configuration from the project checkout and install it as root, mode `0644`
+   (the panel reads the server name from it):
+
+   ```sh
+   candidate=$(mktemp)
+   gerbera --create-config 2>/dev/null |
+     python3 sharing/storage/dlna_config.py --name 'LEÓN Películas' \
+       --library /srv/leon-storage/VIDEO_FOLDER --interface eth0 > "$candidate"
+   sudo install -o root -g root -m 0644 "$candidate" /etc/gerbera/config.xml
+   ```
+
+   When regenerating, pass the existing `--udn` from `/etc/gerbera/config.xml` so TVs keep the
+   same server. Use `--scan timed` for a network mount. Tailscale grants keep port 8200 closed to
+   other tailnet devices.
+
+3. Install `sharing/storage/dlna-icons/*` to `/usr/local/share/leon-dlna/icons/` and
+   `sharing/storage/gerbera-storage.conf` as
+   `/etc/systemd/system/gerbera.service.d/10-leon-storage.conf`. So that connecting the drive
+   starts the server, link `/usr/lib/systemd/system/gerbera.service` (and `smbd.service`) into
+   `/etc/systemd/system/srv-leon\x2dstorage.mount.wants/`; `systemctl add-wants` refuses the
+   generated fstab mount unit. Then reload systemd, unmask, enable and start `gerbera.service`.
+   Disable `minidlna.service` if it served the same folder.
+4. On the TV, open the media player app or VLC → Local network and select the server.
    VLC shows embedded MKV subtitles and plays DTS audio more reliably than built-in players.
+   A changed file name or new poster appears after the next index rebuild.
+
+### Movie library: names, posters and the phone
+
+`sharing/storage/library.py` keeps `PELICULAS` (one folder per movie, `Title (Year)`) tidy:
+
+- **Names.** A video or folder added at the top of the library with another name, such as
+  `The.Movie.2019.2160p.WEB-DL.x265-GRP.mkv`, is parsed and checked against
+  [TMDB](https://www.themoviedb.org/). When TMDB confirms the title and year, the video and its
+  subtitles move to `Title (Year)/Title (Year)[ - 4K|CAM].ext` with TMDB's Spanish title.
+  Otherwise the upload stays where it is and **Storage → Movies → Need a name** lists it with a
+  suggestion. Nothing is deleted or overwritten; every move is written to
+  `/var/lib/leon-storage/moves.jsonl`. Uploads changed in the last 15 minutes are left alone,
+  so a copy in progress is never moved.
+- **Posters.** Each `Title (Year)` folder without `folder.jpg` gets the TMDB poster. Gerbera,
+  Kodi, Finder, Windows and the phone show it. Put another image there as `folder.jpg` to
+  replace a wrong one; existing posters are never overwritten.
+- **Phone.** **Storage → Movies** shows every movie by poster, with recently added ones in a
+  swipeable row, search, and Play or Download.
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.
+
+1. Create a free TMDB account and copy its **API Read Access Token**. Store it as
+   `/etc/leon-storage/tmdb-token`, owned by root, mode `0600`. Keep it out of Git.
+2. Install `library.py` and `dlna-rebuild.sh` to `/usr/local/lib/leon-storage/` (root, `0644`),
+   and `leon-storage-library.service`, `.timer` and `.path` to `/etc/systemd/system/`. In the
+   service, set `User=` to the drive's owner account, the `uid=` in its exFAT fstab entry.
+3. Try it on a few folders first:
+   `sudo -u OWNER python3 -I /usr/local/lib/leon-storage/library.py /srv/leon-storage/PELICULAS --token-file TOKEN_COPY --limit 3`.
+   Use a copy of the token the owner account can read, then delete the copy.
+4. `sudo systemctl daemon-reload && sudo systemctl enable --now leon-storage-library.path leon-storage-library.timer`
+   and `sudo systemctl enable leon-storage-library.service`. A pass runs when the drive is
+   connected, when something is added to `PELICULAS`, and every hour. After a pass that renamed
+   or added posters, the Gerbera index is rebuilt (the TV list is empty for a minute or two);
+   while a TV is streaming, the rebuild waits for a later pass.
 
 ## Serve computers at home without Tailscale
 

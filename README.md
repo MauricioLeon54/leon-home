@@ -36,6 +36,7 @@ everyday use happens in the browser. No Mac app is required.
 | Quiet disk maintenance | Weekly cleanup of obsolete downloaded system packages, using existing operating-system timers.      |
 | English and Spanish    | Choose the language in Settings on each device.                                                     |
 | Connection guide       | Plain steps for iPhone, Mac, Windows and TV, with each drive’s sign-in shown on request.            |
+| Movies                 | Browse the movie folder by poster; new uploads get tidy names and posters automatically.            |
 
 The map represents observed devices, not guaranteed physical wiring. Traffic readings and router
 controls support the HUAWEI WiFi BE3 Pro and need a one-time router connection from the panel;
@@ -71,6 +72,8 @@ A household can attach a USB drive and share selected folders over its own Tails
 connection, and play videos on TVs at home. Follow the [storage setup guide](sharing/guides/STORAGE.md)
 for disk mounting, local account setup and permission checks. In the panel, **Drives** shows the
 drive, how to connect from each device, and **Browse files** to search and download files.
+**Movies** shows the movie folder by poster; an optional service names new uploads and adds
+posters from TMDB (this product uses the TMDB API but is not endorsed or certified by TMDB).
 
 ## Development
 

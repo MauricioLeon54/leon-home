@@ -49,10 +49,10 @@ interface PendingRead {
 }
 const pendingReads = new Map<string, PendingRead>();
 
-async function fetchText(path: string, signal: AbortSignal): Promise<string> {
+async function fetchText(path: string, signal: AbortSignal, maximumBytes: number): Promise<string> {
   const response = await fetch(apiUrl(path), { cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal });
   if (!response.ok) throw new ReadStatusError(response.status);
-  return readText(response);
+  return readText(response, maximumBytes);
 }
 export class ReadStatusError extends Error {
   constructor(readonly status: number) {
@@ -67,7 +67,8 @@ export async function readGetJson(path: string, signal?: AbortSignal, maximumByt
   if (!pending) {
     if (pendingReads.size >= 32) throw new Error('Too many pending reads');
     const controller = new AbortController();
-    const result = fetchText(path, AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]));
+    // The first reader's limit bounds the shared body; each reader re-checks its own below.
+    const result = fetchText(path, AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]), maximumBytes);
     pending = { controller, result, readers: 0 };
     pendingReads.set(key, pending);
   }

@@ -65,6 +65,27 @@ function automationView(failuresOnly) {
   };
 }
 
+const movie = (title, year, addedAt, overrides = {}) => ({
+  id: `${title} (${year})`,
+  title,
+  year,
+  posterUrl: `/storage/poster?movie=${encodeURIComponent(`${title} (${year})`)}`,
+  videoPath: `PELICULAS/${title} (${year})/${title}.mp4`,
+  canPlayInline: true,
+  sizeBytes: 1_500_000_000,
+  addedAt,
+  ...overrides,
+});
+function moviesView() {
+  return {
+    isAvailable: true,
+    folder: 'PELICULAS',
+    movies: [movie('Coco', 2017, 1_700_000_000), movie('Película rara', 2001, 1_800_000_000, { posterUrl: null, videoPath: 'PELICULAS/Película rara (2001)/rara.mkv', canPlayInline: false })],
+    review: [{ name: 'coco.final.mkv', reason: 'More than one movie matches this name.', suggestion: 'Coco (2017)' }],
+    lastRun: { at: 1_800_000_000, renamed: 2, covers: 3 },
+  };
+}
+
 function passwordReply(handlers) {
   return handlers.password ? handlers.password() : [{ status: 'shown', message: '', password: 'synthetic pass' }];
 }
@@ -88,6 +109,7 @@ async function start(browserType, handlers = {}) {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => void globalThis.copied.push(text) }, configurable: true });
   });
   await page.clock.install();
+  const views = { '/leon/v1/storage': handlers.storage ?? storageView, '/leon/v1/movies': handlers.movies ?? moviesView };
   await page.route('https://leon.test/**', async route => {
     const request = route.request(),
       url = new URL(request.url()),
@@ -95,7 +117,7 @@ async function start(browserType, handlers = {}) {
     const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: typeof body === 'string' ? body : JSON.stringify(body) });
     if (pathname === '/leon/v1/session') return json(session);
     if (pathname.startsWith('/leon/v1/')) requests.push(pathname + url.search);
-    if (pathname === '/leon/v1/storage') return json(handlers.storage ? handlers.storage() : storageView());
+    if (Object.hasOwn(views, pathname)) return json(views[pathname]());
     if (pathname === '/leon/v1/storage/files') {
       const view = filesView(url.searchParams.get('path') ?? '', url.searchParams.get('q') ?? '');
       return view ? json(view) : json({ status: 'unavailable' }, 404);
@@ -359,5 +381,41 @@ for (const browserType of [chromium, webkit]) {
       assert.deepEqual(app.errors, []);
     },
     { answer: () => ({ status: 'forbidden', message: '' }) }
+  );
+
+  appTest(browserType, `${browserType.name()} movies show the newest poster first, filter by title and open a playable detail`, async app => {
+    await app.page.goto('https://leon.test/storage');
+    await app.page.getByRole('link', { name: /^Movies/ }).click();
+    await app.page.locator('.movie-rail-counter', { hasText: '1 / 2' }).waitFor();
+    assert.equal(locationOf(app.page), '/storage/movies');
+    assert.equal(await app.page.locator('.movie-rail-title').textContent(), 'Película rara');
+    assert.equal(await app.page.locator('.movie-slide.is-active .poster-placeholder').count(), 1);
+    assert.equal(await app.page.getByText('coco.final.mkv').count(), 1);
+    assert.equal(await app.page.getByText('Suggested: Coco (2017)').count(), 1);
+    await app.page.getByRole('searchbox', { name: 'Search movies' }).fill('pelicula');
+    await app.page.clock.runFor(400);
+    await app.page.locator('.movie-count', { hasText: '1 of 2 movies' }).waitFor();
+    await app.page.locator('.movie-grid').getByRole('button', { name: 'Película rara (2001)' }).click();
+    assert.equal(await app.page.getByRole('link', { name: 'Download movie' }).getAttribute('href'), `/storage/download?path=${encodeURIComponent('PELICULAS/Película rara (2001)/rara.mkv')}`);
+    await app.page.keyboard.press('Escape');
+    await app.page.clock.runFor(100);
+    await app.page.locator('dialog.sheet').waitFor({ state: 'detached' });
+    await app.page.getByRole('searchbox', { name: 'Search movies' }).fill('');
+    await app.page.clock.runFor(400);
+    await app.page.locator('.movie-grid').getByRole('button', { name: 'Coco (2017)' }).click();
+    assert.equal(await app.page.getByRole('link', { name: 'Play' }).getAttribute('href'), `/storage/download?path=${encodeURIComponent('PELICULAS/Coco (2017)/Coco.mp4')}`);
+    assert.equal(await app.page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth), true);
+    assert.deepEqual(app.errors, []);
+  });
+
+  appTest(
+    browserType,
+    `${browserType.name()} movies explain a disconnected drive`,
+    async app => {
+      await app.page.goto('https://leon.test/storage/movies');
+      await app.page.getByText('Drive not connected').waitFor();
+      assert.deepEqual(app.errors, []);
+    },
+    { movies: () => ({ isAvailable: false, folder: 'PELICULAS', movies: [], review: [], lastRun: null }) }
   );
 }

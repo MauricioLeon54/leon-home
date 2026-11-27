@@ -16,6 +16,7 @@ import { renderAutomation } from './pages/storage/automation.js';
 import { renderFiles } from './pages/storage/files.js';
 import { renderGuide } from './pages/storage/guide.js';
 import { renderStorage } from './pages/storage/index.js';
+import { renderMovies } from './pages/storage/movies.js';
 
 /** Every in-app page. overview.py serves the shell for exactly these paths (APP_ROUTES). */
 export const ROUTES: ReadonlyArray<Route> = [
@@ -24,6 +25,7 @@ export const ROUTES: ReadonlyArray<Route> = [
   { pattern: '/network/device/:id', tab: 'network', title: t('Device'), parent: '/network', render: renderDevice },
   { pattern: '/storage', tab: 'storage', title: t('Storage'), parent: null, render: renderStorage },
   { pattern: '/storage/files', tab: 'storage', title: t('Files'), parent: '/storage', render: renderFiles },
+  { pattern: '/storage/movies', tab: 'storage', title: t('Movies'), parent: '/storage', render: renderMovies },
   { pattern: '/storage/guide', tab: 'storage', title: t('How to connect'), parent: '/storage', render: renderGuide },
   { pattern: '/storage/automation', tab: 'storage', title: t('Automation'), parent: '/storage', render: renderAutomation },
   { pattern: '/settings', tab: 'settings', title: t('Settings'), parent: null, render: renderSettings },

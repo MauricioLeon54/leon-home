@@ -1,0 +1,11 @@
+# Hourly pass: picks up uploads that were still copying during the last pass.
+[Unit]
+Description=Hourly LEÓN movie library pass
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

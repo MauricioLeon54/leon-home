@@ -1,0 +1,226 @@
+// Storage → Movies: a snap-scrolling featured rail, a 3-column poster grid and the detail sheet.
+@use '../tokens' as *;
+@use '../mixins' as *;
+
+$slide: 70%;
+
+// Every poster sits in a fixed 2:3 box, so images and placeholders never shift the layout.
+.poster {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: var(--radius-s);
+  background: color('raised');
+  box-shadow: 0 0 0 1px color('line');
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+.poster-placeholder {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 4px;
+  height: 100%;
+  padding: 12px;
+  background: linear-gradient(160deg, color('raised') 0%, color('surface') 55%, color('well') 100%);
+}
+.poster-placeholder-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.poster-placeholder-year {
+  color: color('ash');
+  font-size: var(--text-s);
+  @include numeric;
+}
+.movie-button {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+
+  &:focus-visible {
+    outline: none;
+
+    .poster {
+      box-shadow: 0 0 0 2px color('bone');
+    }
+  }
+}
+
+// Featured rail: bleeds to the screen edges and centres the snapped poster.
+.movie-featured {
+  margin: 4px calc(-1 * var(--gutter)) 0;
+}
+.movie-rail {
+  display: flex;
+  gap: 14px;
+  margin: 0;
+  padding: 8px calc((100% - #{$slide}) / 2) 12px;
+  list-style: none;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+.movie-slide {
+  flex: 0 0 $slide;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  opacity: 0.5;
+  transform: scale(0.9);
+  transition:
+    transform var(--duration-medium) var(--ease-smooth-out),
+    opacity var(--duration-medium) var(--ease-smooth-out);
+
+  .poster {
+    border-radius: var(--radius-m);
+  }
+  &.is-active {
+    opacity: 1;
+    transform: none;
+
+    .poster {
+      box-shadow:
+        0 0 0 1px color('line-strong'),
+        0 18px 40px rgba(0, 0, 0, 0.55);
+    }
+  }
+  .movie-button:active .poster {
+    transform: scale(var(--scale-small));
+  }
+  @include reduced-motion {
+    transition: none;
+  }
+}
+.movie-rail-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px calc((100% - #{$slide}) / 2) 0;
+}
+.movie-rail-name {
+  min-width: 0;
+  flex: 1;
+}
+.movie-rail-title {
+  display: inline;
+  font-size: var(--text-xl);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.movie-rail-year {
+  margin-left: 8px;
+  color: color('ash');
+  @include numeric;
+}
+.movie-rail-counter {
+  flex: none;
+  color: color('ash');
+  font-size: var(--text-s);
+  @include numeric;
+}
+.movie-meta {
+  margin: 14px 4px 0;
+  color: color('ash');
+  font-size: var(--text-s);
+}
+.movie-count {
+  margin: 10px 4px;
+  color: color('ash');
+  font-size: var(--text-s);
+  @include numeric;
+}
+
+// All movies: content-visibility skips layout and paint for off-screen cards in a 2000-title library.
+.movie-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  @include wide {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  @include desktop {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+.movie-card {
+  min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 220px;
+
+  .movie-button {
+    transition: transform var(--duration-quick) var(--ease-smooth-out);
+
+    &:active {
+      transform: scale(var(--scale-medium));
+    }
+    @include reduced-motion {
+      transition: none;
+    }
+  }
+}
+.movie-card-title {
+  display: block;
+  margin-top: 6px;
+  font-size: var(--text-s);
+  font-weight: 500;
+  @include ellipsis;
+}
+.movie-card-year {
+  display: block;
+  color: color('ash');
+  font-size: 12px;
+  @include numeric;
+}
+.movie-review-name {
+  overflow-wrap: anywhere;
+}
+
+// Detail sheet
+.movie-detail {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+
+  > .poster {
+    width: min(58vw, 240px);
+    border-radius: var(--radius-m);
+  }
+  .buttons {
+    justify-content: center;
+  }
+  .note {
+    margin: 0;
+  }
+}
+.movie-detail-facts {
+  color: color('ash');
+  @include numeric;
+}

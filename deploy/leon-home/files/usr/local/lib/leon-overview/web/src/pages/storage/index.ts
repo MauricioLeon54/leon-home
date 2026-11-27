@@ -128,7 +128,12 @@ export function renderStorage(context: RouteContext): PageView {
         : [];
       return [
         section({}, [myDrive(view), ...view.peers.map(peerDrive)]),
-        section({}, [list([{ kind: 'navigation', title: t('How to connect'), detail: t('Step by step for iPhone, Mac, Windows and TV'), href: '/storage/guide' }])]),
+        section({}, [
+          list([
+            { kind: 'navigation', title: t('Movies'), detail: t('Browse your movie library by poster'), href: '/storage/movies' },
+            { kind: 'navigation', title: t('How to connect'), detail: t('Step by step for iPhone, Mac, Windows and TV'), href: '/storage/guide' },
+          ]),
+        ]),
         connectSection(view),
         view.tvServerName === null
           ? null

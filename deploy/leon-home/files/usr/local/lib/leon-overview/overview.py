@@ -17,6 +17,7 @@ import collections
 import configparser
 import hashlib
 import hmac
+import html
 import http.client
 import http.server
 import ipaddress
@@ -34,6 +35,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 
@@ -117,6 +119,7 @@ APP_ROUTES = frozenset(
         '/storage',
         '/storage/files',
         '/storage/guide',
+        '/storage/movies',
         '/storage/automation',
         '/automation',
         '/settings',
@@ -1552,6 +1555,8 @@ def usb_storage_view():
 
 SAMBA_CONFIG = '/etc/samba/smb.conf'
 MINIDLNA_CONFIG = '/etc/minidlna.conf'
+GERBERA_CONFIG = '/etc/gerbera/config.xml'
+GERBERA_NAME = re.compile(r'<name>([^<]{1,200})</name>')
 # Optional, administrator-written: {"name": "...", "peers": [{"name": "...", "url": "smb://..."}]}
 STORAGE_SETTINGS = '/etc/leon-overview/storage.json'
 DRIVE_NAME = re.compile(r'[^\x00-\x1f\x7f]{1,40}')
@@ -1659,23 +1664,41 @@ def tailscale_address():
         return None
 
 
+def minidlna_name(text):
+    names = [
+        line.partition('=')[2].strip()
+        for line in text.splitlines()
+        if line.startswith('friendly_name=')
+    ]
+    return names[-1] if names else ''
+
+
+def gerbera_name(text):
+    # The first <name> in Gerbera's configuration is the server's own name.
+    match = GERBERA_NAME.search(text)
+    return html.unescape(match[1]).strip() if match else ''
+
+
 def tv_server_name():
-    """The DLNA name TVs show, when the media server is configured and running."""
-    try:
-        with open(MINIDLNA_CONFIG, encoding='utf-8') as handle:
-            lines = handle.read(16_384).splitlines()
-        active = subprocess.run(
-            # Fixed runtime tool from the service PATH; callers cannot select an executable.
-            ['systemctl', 'is-active', '--quiet', 'minidlna'],  # noqa: S607
-            timeout=2,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    names = [line.partition('=')[2].strip() for line in lines if line.startswith('friendly_name=')]
-    if active.returncode != 0:
-        return None
-    return names[-1][:60] if names and names[-1] else 'Media server'
+    """The DLNA name TVs show, when a media server is configured and running."""
+    for service, path, parse in (
+        ('gerbera', GERBERA_CONFIG, gerbera_name),
+        ('minidlna', MINIDLNA_CONFIG, minidlna_name),
+    ):
+        try:
+            with open(path, encoding='utf-8') as handle:
+                text = handle.read(65_536)
+            active = subprocess.run(
+                # Fixed runtime tool and service name; callers cannot select an executable.
+                ['systemctl', 'is-active', '--quiet', service],  # noqa: S607
+                timeout=2,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if active.returncode == 0:
+            return parse(text)[:60] or 'Media server'
+    return None
 
 
 HOST_MOUNTS = '/proc/1/mountinfo'
@@ -1866,6 +1889,16 @@ INLINE_TYPES = frozenset(
     }
 )
 RANGE = re.compile(r'bytes=(\d{0,15})-(\d{0,15})')
+# Movie library: one `Title (Year)` folder per movie inside MOVIE_FOLDER, posters as folder.jpg
+# (sharing/storage/library.py names uploads and adds posters, and writes LIBRARY_STATE).
+MOVIE_FOLDER = 'PELICULAS'
+MOVIE_NAME = re.compile(r'(.+?) \(((?:18|19|20)\d{2})\)')
+MOVIE_VIDEOS = frozenset({'mp4', 'm4v', 'mov', 'mkv', 'avi', 'webm', 'ts', 'wmv', 'mpg', 'mpeg'})
+INLINE_VIDEOS = frozenset({'mp4', 'm4v', 'mov'})
+MAX_MOVIES = 2000
+MAX_MOVIE_FILES = 100
+MAX_POSTER_BYTES = 2_000_000
+LIBRARY_STATE = '/var/lib/leon-storage/library.json'
 CHUNK = 1 << 20
 
 
@@ -1977,6 +2010,127 @@ def file_entry(path, name, is_directory, detail, info):
         'sizeBytes': None if is_directory else info.st_size,
         'modifiedAt': info.st_mtime,
     }
+
+
+def movie_row(entry):
+    """One movie folder as the app shows it, or None when it is not a `Title (Year)` folder."""
+    match = MOVIE_NAME.fullmatch(entry.name)
+    if not match or entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+        return None
+    has_poster, best = False, None
+    try:
+        with os.scandir(entry.path) as files:
+            for index, item in enumerate(files):
+                if index >= MAX_MOVIE_FILES:
+                    break
+                if item.is_symlink() or not item.is_file(follow_symlinks=False):
+                    continue
+                if item.name == 'folder.jpg':
+                    has_poster = True
+                elif visible(item.name) and item.name.rpartition('.')[2].lower() in MOVIE_VIDEOS:
+                    length = item.stat(follow_symlinks=False).st_size
+                    if best is None or length > best[1]:
+                        best = (item.name, length)
+        added = entry.stat(follow_symlinks=False).st_mtime
+    except OSError:
+        return None
+    movie_id = urllib.parse.quote(entry.name, safe='')
+    return {
+        'id': entry.name,
+        'title': match[1],
+        'year': int(match[2]),
+        'posterUrl': f'/storage/poster?movie={movie_id}' if has_poster else None,
+        'videoPath': f'{MOVIE_FOLDER}/{entry.name}/{best[0]}' if best else None,
+        'canPlayInline': bool(best) and best[0].rpartition('.')[2].lower() in INLINE_VIDEOS,
+        'sizeBytes': best[1] if best else None,
+        'addedAt': added,
+    }
+
+
+def library_state():
+    """The organizer's last pass: ({at, renamed, covers} | None, review rows), bounded and type-checked."""
+    try:
+        with open(LIBRARY_STATE, encoding='utf-8') as handle:
+            state = json.loads(handle.read(262_144))
+    except (OSError, ValueError):
+        return None, []
+    if not isinstance(state, dict):
+        return None, []
+    counts = [state.get(key) for key in ('at', 'renamed', 'covers')]
+    last_run = (
+        dict(zip(('at', 'renamed', 'covers'), counts, strict=True))
+        if all(
+            isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            for value in counts
+        )
+        else None
+    )
+    review = []
+    for item in state.get('review') if isinstance(state.get('review'), list) else []:
+        if len(review) >= 50:
+            break
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get('name'), str)
+            or not isinstance(item.get('reason'), str)
+        ):
+            continue
+        suggestion = item.get('suggestion')
+        review.append(
+            {
+                'name': item['name'][:255],
+                'reason': item['reason'][:200],
+                'suggestion': suggestion[:255] if isinstance(suggestion, str) else None,
+            }
+        )
+    return last_run, review
+
+
+def movies_view():
+    folder = os.path.join(STORAGE_MOUNT, MOVIE_FOLDER)
+    last_run, review = library_state()
+    unavailable = {
+        'isAvailable': False,
+        'folder': MOVIE_FOLDER,
+        'movies': [],
+        'review': [],
+        'lastRun': last_run,
+    }
+    if not os.path.ismount(STORAGE_MOUNT) or os.path.islink(folder) or not os.path.isdir(folder):
+        return unavailable
+    movies = []
+    try:
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if len(movies) >= MAX_MOVIES:
+                    break
+                row = visible(entry.name) and movie_row(entry)
+                if row:
+                    movies.append(row)
+    except OSError:
+        return unavailable
+    movies.sort(key=lambda movie: (sort_key(movie['title']), movie['year']))
+    return {
+        'isAvailable': True,
+        'folder': MOVIE_FOLDER,
+        'movies': movies,
+        'review': review,
+        'lastRun': last_run,
+    }
+
+
+def sort_key(title):
+    """Alphabetical order that ignores case and accents (Á sorts with A)."""
+    folded = unicodedata.normalize('NFKD', title.casefold())
+    return ''.join(character for character in folded if not unicodedata.combining(character))
+
+
+def poster_path(movie_id):
+    """The folder.jpg of one movie folder inside the mounted library, or None."""
+    if not MOVIE_NAME.fullmatch(movie_id) or '/' in movie_id or len(movie_id) > 255:
+        return None
+    resolved = storage_path(f'{MOVIE_FOLDER}/{movie_id}/folder.jpg')
+    return resolved[0] if resolved else None
 
 
 def files_view(relative, query=''):
@@ -2220,6 +2374,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             '/storage/download',
             '/api/v1/storage/files',
             '/api/v1/automation',
+            '/api/v1/movies',
+            '/storage/poster',
         ):
             return self.storage_get(path)
         if (
@@ -2295,6 +2451,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     {'status': 'unavailable', 'message': 'Folder unavailable or drive not mounted'},
                 )
             return self.reply_json(200, view)
+        if path == '/api/v1/movies':
+            return self.reply_json(200, movies_view())
+        if path == '/storage/poster':
+            query = (
+                urllib.parse.parse_qs(self.path.partition('?')[2], max_num_fields=2)
+                if len(self.path) <= 2048
+                else {}
+            )
+            return self.poster((query.get('movie') or [''])[0])
         if path == '/api/v1/automation':
             query = (
                 urllib.parse.parse_qs(self.path.partition('?')[2], max_num_fields=10)
@@ -2798,6 +2963,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header('Referrer-Policy', 'no-referrer')
         self.end_headers()
         self.wfile.write(body)
+
+    def poster(self, movie_id):
+        """A movie poster, cacheable by the phone so browsing does not re-download every image."""
+        path = poster_path(movie_id)
+        try:
+            if path is None:
+                raise FileNotFoundError(movie_id)
+            with open(path, 'rb') as handle:
+                data = handle.read(MAX_POSTER_BYTES + 1)
+        except OSError:
+            return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
+        if len(data) > MAX_POSTER_BYTES or not data.startswith(b'\xff\xd8\xff'):
+            return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'image/jpeg')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'private, max-age=86400')
+        self.send_header('Content-Security-Policy', "default-src 'none'; sandbox")
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.end_headers()
+        self.wfile.write(data)
+        return None
 
     def download(self, relative):
         resolved = storage_path(relative)

@@ -1,0 +1,12 @@
+# Starts a pass as soon as something is added to or removed from the movie folder.
+[Unit]
+Description=Watch the LEÓN movie folder
+BindsTo=srv-leon\x2dstorage.mount
+After=srv-leon\x2dstorage.mount
+
+[Path]
+PathChanged=/srv/leon-storage/PELICULAS
+Unit=leon-storage-library.service
+
+[Install]
+WantedBy=srv-leon\x2dstorage.mount

@@ -1,0 +1,35 @@
+# Names new movie uploads, adds TMDB posters (folder.jpg) and rebuilds the Gerbera index so TVs
+# and the LEÓN Home panel show them. Install to /etc/systemd/system/ with the .timer and .path.
+# User= must be the drive's owner account (the uid= in the exFAT fstab entry).
+[Unit]
+Description=LEÓN movie library
+BindsTo=srv-leon\x2dstorage.mount
+After=srv-leon\x2dstorage.mount network-online.target
+Wants=network-online.target
+ConditionPathIsMountPoint=/srv/leon-storage
+ConditionPathIsReadWrite=/srv/leon-storage
+ConditionPathExists=/etc/leon-storage/tmdb-token
+
+[Service]
+Type=oneshot
+User=nas_owner
+LoadCredential=tmdb-token:/etc/leon-storage/tmdb-token
+RuntimeDirectory=leon-storage-library
+StateDirectory=leon-storage
+StateDirectoryMode=0755
+ExecStart=/usr/bin/python3 -I /usr/local/lib/leon-storage/library.py /srv/leon-storage/PELICULAS --state /var/lib/leon-storage/library.json --changed-flag /run/leon-storage-library/changed
+ExecStartPost=+/bin/sh /usr/local/lib/leon-storage/dlna-rebuild.sh
+TimeoutStartSec=30min
+Nice=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/srv/leon-storage/PELICULAS
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+# Run each time the drive is connected.
+WantedBy=srv-leon\x2dstorage.mount

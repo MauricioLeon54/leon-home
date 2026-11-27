@@ -1,4 +1,4 @@
-import { boolean, items, nullable, nullableNumber, oneOf, optionalBoolean, optionalList, record, string } from '../decode.js';
+import { boolean, integer, items, nullable, nullableNumber, number, oneOf, optionalBoolean, optionalList, record, string } from '../decode.js';
 
 /**
  * Storage tab wire contracts. overview.py's storage_view(), files_view() and automation_view()
@@ -67,12 +67,34 @@ export interface AutomationSettingsRequest {
   editorUrl: string; // '' clears it
 }
 
+/** GET /api/v1/movies: the drive's movie library, sorted by title on the server. */
+export interface MoviesView {
+  isAvailable: boolean; // false when the drive or the movie folder is not mounted
+  folder: string; // library folder name on the drive, e.g. "PELICULAS"
+  movies: Array<{
+    id: string; // movie folder name, "Coco (2017)"; never contains '/'
+    title: string;
+    year: number | null;
+    posterUrl: string | null; // /storage/poster?movie=<encoded id> (342×513 JPEG)
+    videoPath: string | null; // drive-relative path for /storage/download
+    canPlayInline: boolean; // mp4/m4v/mov play in Safari; anything else downloads
+    sizeBytes: number | null;
+    addedAt: number | null; // unix seconds
+  }>; // ≤ 2000
+  review: Array<{ name: string; reason: string; suggestion: string | null }>; // ≤ 50 uploads the organizer could not name; reason is server wording
+  lastRun: { at: number; renamed: number; covers: number } | null; // last automatic organizer pass
+}
+export type Movie = MoviesView['movies'][number];
+
 // Parsing: unknown in, typed view out. Lists are bounded, URLs and paths are pattern-checked, sizes stay null when unknown.
 const SMB_URL = /^smb:\/\/[A-Za-z0-9.-]{1,253}(\/[A-Za-z0-9 _.-]{1,80})?$/;
 export const EDITOR_URL = /^https:\/\/[a-z0-9-]+\.[a-z0-9-]+\.ts\.net(:[0-9]{1,5})?\/?$/;
 const WORKFLOW_ID = /^[A-Za-z0-9_-]{1,80}$/;
 const TONES: ReadonlyArray<Tone> = ['good', 'warn', 'unknown'];
 const MAX_BYTES = 2 ** 60;
+const MAX_UNIX = 4_102_444_800;
+const POSTER_URL = /^\/storage\/poster\?movie=[^&#]{1,800}$/;
+const MOVIE_ID = /^[^/]{1,255}$/;
 
 function matching(value: unknown, pattern: RegExp, maximum: number): string {
   const text = string(value, maximum);
@@ -144,7 +166,7 @@ export function parseFiles(value: unknown): FilesView {
         isDirectory: boolean(entry.isDirectory),
         detail: string(entry.detail, 1100),
         sizeBytes: nullableNumber(entry.sizeBytes, 0, MAX_BYTES),
-        modifiedAt: nullableNumber(entry.modifiedAt, 0, 4_102_444_800),
+        modifiedAt: nullableNumber(entry.modifiedAt, 0, MAX_UNIX),
       };
     }),
   };
@@ -180,5 +202,34 @@ export function parseAutomation(value: unknown): AutomationView {
       })
     ),
     failuresOnly: boolean(root.failuresOnly),
+  };
+}
+
+export function parseMovies(value: unknown): MoviesView {
+  const root = record(value);
+  return {
+    isAvailable: boolean(root.isAvailable),
+    folder: string(root.folder, 120),
+    movies: items(root.movies, 2000, item => {
+      const movie = record(item);
+      return {
+        id: matching(movie.id, MOVIE_ID, 255),
+        title: string(movie.title, 255),
+        year: nullable(movie.year, year => integer(year, 1888, 2100)),
+        posterUrl: nullable(movie.posterUrl, url => matching(url, POSTER_URL, 820)),
+        videoPath: nullable(movie.videoPath, relativePath),
+        canPlayInline: boolean(movie.canPlayInline),
+        sizeBytes: nullableNumber(movie.sizeBytes, 0, MAX_BYTES),
+        addedAt: nullableNumber(movie.addedAt, 0, MAX_UNIX),
+      };
+    }),
+    review: items(root.review, 50, item => {
+      const entry = record(item);
+      return { name: string(entry.name, 255), reason: string(entry.reason, 200), suggestion: nullable(entry.suggestion, text => string(text, 255)) };
+    }),
+    lastRun: nullable(root.lastRun, item => {
+      const run = record(item);
+      return { at: number(run.at, 0, MAX_UNIX), renamed: integer(run.renamed, 0, 100_000), covers: integer(run.covers, 0, 100_000) };
+    }),
   };
 }
