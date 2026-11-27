@@ -191,7 +191,7 @@
     "sharing/leon_home/housekeeping.py": "e0ef336d6568d2a716b4f703542f50d19bae47882344f037cba7740360773bea",
     "sharing/leon_home/install.py": "a080acdcb9a6522315d143f82bca99d04bbb2d08f8b9aaa9ba473d8034831be3",
     "sharing/leon_home/release.py": "0d7530cf0b3dbb064528521a19478af62eb0bc1cf64189142104aa870cc39123",
-    "sharing/leon_home/selfheal.py": "631efd50f3eb0d6a89a76e90d4223e889fecb7d83c781b4a05383e5125f0723f",
+    "sharing/leon_home/selfheal.py": "cfec39ed6bbc50b935cf5f9af23b2a8686eb421e89334ab0eba63e7968c43260",
     "sharing/leon_home/worker.py": "2ddd80bab334e14682104a21c3848a1ba42664864e1cbfe673ce62a53424b96d",
     "sharing/run_support.py": "13a6fe62c391bdd44863a873a9b3cdb98edfbba71f85621ff3ea39476ce8b002",
     "sharing/run_updater.py": "54ae5079cbe38d319787b54580c0526564b1dee41f77b1cb08b40b47adc24ccf",

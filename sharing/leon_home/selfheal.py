@@ -3,7 +3,8 @@
 
 Observes the local DNS chain, the home network link and Tailscale, and repairs only what this Pi
 owns, with bounded escalation: restart Unbound or Pi-hole FTL, restart networking, restart
-tailscaled and, as a last resort for a dead link, one reboot at most every 6 hours. An Internet
+tailscaled and, as a last resort for a dead link, one reboot at most every 6 hours. A fixed set of
+essential domains is kept out of Pi-hole's blocklists: a blocked one is allowlisted. An Internet
 or router outage outside the Pi is recorded and never acted on beyond that. Never changes the
 router, DHCP, client DNS, Tailscale settings or routes.
 """
@@ -20,6 +21,24 @@ STATE_DIR = os.environ.get('STATE_DIRECTORY', '/var/lib/leon-home-selfheal')
 STATE_FILE = os.path.join(STATE_DIR, 'state.json')
 EVENTS_FILE = os.path.join(STATE_DIR, 'events.jsonl')
 NOTIFY = '/usr/local/bin/leon-notify'
+PIHOLE = '/usr/local/bin/pihole'
+# Connectivity checks, sign-in and messaging: blocking these looks like "no Internet" to a person.
+ESSENTIAL_DOMAINS = (
+    'connectivitycheck.gstatic.com',
+    'captive.apple.com',
+    'www.google.com',
+    'www.apple.com',
+    'www.icloud.com',
+    'web.whatsapp.com',
+    'login.microsoftonline.com',
+    'www.youtube.com',
+    'www.netflix.com',
+    'github.com',
+    'controlplane.tailscale.com',
+    'login.tailscale.com',
+    'ntfy.sh',
+)
+ALLOW_COMMENT = 'LEÓN self-repair: essential domain'
 MAX_EVENTS = 300
 
 DNS_COOLDOWN = 600
@@ -96,17 +115,50 @@ def decide(state, seen, now, uptime):
     return state, actions, events
 
 
-def dns_answers(port, name='cloudflare.com'):
+def dns_query(name):
     question = b''.join(bytes([len(part)]) + part.encode() for part in name.split('.'))
-    query = struct.pack('>HHHHHH', 0x4C45, 0x0100, 1, 0, 0, 0) + question + b'\0\0\1\0\1'
+    return struct.pack('>HHHHHH', 0x4C45, 0x0100, 1, 0, 0, 0) + question + b'\0\0\1\0\1'
+
+
+def ipv4_answers(query, reply):
+    """IPv4 addresses of a clean reply to `query`, or None for no, foreign or failed replies."""
+    if len(reply) < 12 or reply[:2] != query[:2] or reply[3] & 0x0F:
+        return None
+    addresses, position = [], len(query)
+    try:
+        for _ in range(struct.unpack('>H', reply[6:8])[0]):
+            while reply[position] and reply[position] < 0xC0:
+                position += reply[position] + 1
+            position += 2 if reply[position] else 1
+            kind, _, _, length = struct.unpack('>HHIH', reply[position : position + 10])
+            position += 10
+            if kind == 1 and length == 4:
+                addresses.append(socket.inet_ntoa(reply[position : position + 4]))
+            position += length
+    except (IndexError, struct.error):
+        return None
+    return addresses
+
+
+def resolve(port, name):
+    query = dns_query(name)
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
             client.settimeout(2)
             client.sendto(query, ('127.0.0.1', port))
-            reply = client.recv(512)
+            return ipv4_answers(query, client.recv(512))
     except OSError:
-        return False
-    return len(reply) >= 12 and reply[:2] == query[:2] and reply[3] & 0x0F == 0 and reply[7] > 0
+        return None
+
+
+def dns_answers(port, name='cloudflare.com'):
+    return bool(resolve(port, name))
+
+
+def blocked_essentials():
+    # ponytail: detects Pi-hole's default NULL blocking (0.0.0.0) only; NXDOMAIN/NODATA modes need
+    # the Pi-hole API instead.
+    return [name for name in ESSENTIAL_DOMAINS if '0.0.0.0' in (resolve(53, name) or ())]
 
 
 def healthy(check, *arguments):
@@ -155,6 +207,7 @@ def observe(state):
     seen = {'internet': internet, 'link': link, 'gateway': router}
     seen['unbound'] = healthy(dns_answers, 5335)
     seen['pihole'] = healthy(dns_answers, 53)
+    seen['blocked'] = blocked_essentials() if seen['pihole'] else []
     result = run('tailscale', 'status', '--json', timeout=10)
     try:
         status = json.loads(result.stdout)
@@ -192,6 +245,20 @@ DESCRIPTIONS = {
     'tailscale': 'Tailscale disconnected while the Internet works; restarted tailscaled',
     'reboot': 'Home network link still down after a network restart; rebooting',
 }
+
+
+def allow_essentials(state, blocked):
+    """Allowlists blocked essential domains, once per distinct set so a domain that stays blocked
+    (for example through a CNAME) is reported once instead of every run."""
+    previous = state.get('essentialBlocked') or []
+    state['essentialBlocked'] = blocked
+    if not blocked or blocked == previous:
+        return []
+    result = run(PIHOLE, 'allow', *blocked, '--comment', ALLOW_COMMENT, timeout=60)
+    outcome = (
+        'allowlisted' if result is not None and result.returncode == 0 else 'allowlisting failed'
+    )
+    return [f'Pi-hole blocked essential {", ".join(blocked)}; {outcome}']
 
 
 def read_json(path, default):
@@ -244,6 +311,7 @@ def main():
     if seen['gateway']:
         state['gateway'] = seen['gateway']
     texts = events + [DESCRIPTIONS[action] for action in actions]
+    texts += allow_essentials(state, seen['blocked'])
     for text in texts:
         print(text, flush=True)
     if texts:
