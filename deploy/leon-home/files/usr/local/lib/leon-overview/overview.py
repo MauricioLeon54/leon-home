@@ -2690,20 +2690,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply(403, b'Forbidden', 'text/plain; charset=utf-8')
         if self.path.startswith('/api/v1/hardware/'):
             return self.hardware_control(login)
-        if self.path.startswith('/api/v1/network/') or self.path in (
+        guarded = self.path.startswith('/api/v1/network/') or self.path in (
             '/api/v1/automation/settings',
             '/api/v1/storage/password',
             '/api/v1/storage/eject',
+        )
+        if guarded and (
+            self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin')
+            or not self.same_origin()
+            or not token_valid(login, self.headers.get('X-Leon-Token'))
         ):
-            origin, host = self.headers.get('Origin'), self.headers.get('Host')
-            if (
-                self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin')
-                or (origin is not None and origin not in (f'http://{host}', f'https://{host}'))
-                or not token_valid(login, self.headers.get('X-Leon-Token'))
-            ):
-                return self.reply_json(
-                    403, {'status': 'forbidden', 'message': 'Reload the page and try again.'}
-                )
+            return self.reply_json(
+                403, {'status': 'forbidden', 'message': 'Reload the page and try again.'}
+            )
         if self.path == '/api/v1/automation/settings':
             if not self.storage_automation:
                 return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
@@ -2750,10 +2749,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.schedule(login, length)
         return self.reply(404, b'Not found', 'text/plain; charset=utf-8')
 
-    def hardware_control(self, login):
+    def same_origin(self):
+        """A browser request's Origin names this panel. Tailscale Serve proxying to a unix socket
+        sends Host: localhost and the visited name in X-Forwarded-Host, so either one matches."""
         origin = self.headers.get('Origin')
-        host = self.headers.get('Host')
-        if origin is not None and origin not in (f'http://{host}', f'https://{host}'):
+        if origin is None:
+            return True
+        hosts = (self.headers.get('Host'), self.headers.get('X-Forwarded-Host'))
+        return any(origin in (f'http://{host}', f'https://{host}') for host in hosts if host)
+
+    def hardware_control(self, login):
+        if not self.same_origin():
             return self.reply_json(
                 403, {'status': 'forbidden', 'message': 'Cross-site request refused.'}
             )

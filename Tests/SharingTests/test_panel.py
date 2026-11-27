@@ -125,6 +125,27 @@ class PanelTests(unittest.TestCase):
                 self.assertEqual(response.status, 202)
             broker.assert_called_once_with('apply', '1.1.0')
 
+    def test_actions_accept_the_name_serve_forwards_from_its_unix_socket(self):
+        token = family.overview.token('owner@example.test')
+        serve = {
+            'Content-Type': 'application/json',
+            'X-Leon-Token': token,
+            'Host': 'localhost',
+            'X-Forwarded-Host': 'pi.example.test',
+        }
+        with patch.object(family.overview, 'OWNERS', {'owner@example.test'}):
+            for origin, expected in (('https://pi.example.test', 400), ('https://evil.test', 403)):
+                with self.assertRaises(urllib.error.HTTPError) as raised:
+                    self.request(
+                        '/leon/v1/storage/password',
+                        'owner@example.test',
+                        b'{}',
+                        {**serve, 'Origin': origin},
+                    )
+                # 400: past the origin guard to body validation; 403: refused by it.
+                self.assertEqual(raised.exception.code, expected)
+                raised.exception.close()
+
     def test_rpc_support_role_cannot_accept_or_execute_commands(self):
         for operation, allowed in (
             ('status', True),
