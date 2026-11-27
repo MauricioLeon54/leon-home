@@ -36,6 +36,7 @@ import tempfile
 import threading
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -185,6 +186,8 @@ MANIFEST = json.dumps(
 # never stored on the phone: every page and JSON request still goes to the network.
 
 _lock = threading.Lock()
+_dns_action_lock = threading.Lock()
+_dns_last_control = None  # monotonic verification time and its blocking/timer reading
 _names_lock = threading.Lock()
 _wake_lock = threading.Lock()
 _wake_sent = {}
@@ -238,6 +241,18 @@ class PiHole:
             pass
 
 
+def blocking_reading(value):
+    if (
+        isinstance(value, dict)
+        and value.get('blocking') in ('enabled', 'disabled')
+        and 'timer' in value
+    ):
+        timer = value['timer']
+        if timer is None or (type(timer) in (int, float) and 0 <= timer <= 2_147_483_647):
+            return {'blocking': value['blocking'], 'timer': timer}
+    return {'blocking': None, 'timer': None}
+
+
 def pihole_data():
     try:
         with PiHole() as api:
@@ -265,8 +280,7 @@ def pihole_data():
         'percent': summary['queries']['percent_blocked'],
         'clients': summary['clients']['active'],
         'gravity': summary['gravity']['domains_being_blocked'],
-        'blocking': blocking.get('blocking'),
-        'timer': blocking.get('timer'),
+        **blocking_reading(blocking),
         'hours': list(hours.items())[-24:],
         'topBlocked': [(d['domain'], d['count']) for d in blocked],
         'topClients': [
@@ -695,6 +709,55 @@ def record_daily_facts(data):
         print(f'daily facts failed: {type(error).__name__}', file=sys.stderr, flush=True)
 
 
+def own_lan_address(router):
+    """The Pi's source address toward the router; a UDP connect sends nothing."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect((router, 9))
+            return probe.getsockname()[0]
+    except (OSError, TypeError):
+        return None
+
+
+def is_lan_client(address, excluded):
+    try:
+        return ipaddress.IPv4Address(address).is_private and address not in excluded
+    except ValueError:
+        return False
+
+
+def dns_facts(data, now):
+    """Ad-blocker alert facts: counts only. Unknown stays None and never implies a fault."""
+    devices = data.get('devices') or []
+    router = next((d.get('ip') for d in devices if d.get('role') == 'router'), None)
+    excluded = {'127.0.0.1', router, own_lan_address(router)}
+    try:
+        with PiHole() as api:
+            lists = api.call('GET', '/api/lists?type=block')['lists']
+            # 10-minute buckets; the last seven cover a bit more than the past hour.
+            history = api.call('GET', '/api/history/clients?N=0')['history'][-7:]
+        asking = {
+            address
+            for bucket in history
+            for address, queries in bucket['data'].items()
+            if queries and is_lan_client(address, excluded)
+        }
+        failing = sum(list_state(entry) in ('cached', 'failed') for entry in lists)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {'dnsAt': None}
+    dns = data.get('dns') or {}
+    return {
+        'dnsAt': now,
+        'dnsBlocking': dns.get('blocking'),
+        'dnsTimer': dns.get('timer'),
+        'blocklistsFailing': failing,
+        'lanDnsClients': len(asking),
+        'lanDevicesOnline': sum(
+            1 for d in devices if d.get('online') and is_lan_client(d.get('ip', ''), excluded)
+        ),
+    }
+
+
 def record_monitoring_facts(data):
     """Five-minute projection for optional alerts: no names, addresses or credentials."""
     now = int(time.time())
@@ -732,6 +795,7 @@ def record_monitoring_facts(data):
         if type(free) is int and type(total) is int and 0 <= free <= total and total > 0
         else None,
         'unnamedDevices': unnamed,
+        **dns_facts(data, now),
     }
     internet_health.save_json(
         os.path.join(os.path.dirname(DAILY_FACTS), 'monitoring-facts.json'), facts
@@ -766,12 +830,15 @@ def sampler():
     monitoring_at = 0
     while True:
         started = time.time()
+        sampling_since = time.monotonic()
         try:
             data = sample()
             record_temperature(data['host'].get('temperatureCelsius'))
             record_internet(data)
             monitoring_at = refresh_monitoring_facts(data, started, monitoring_at)
             with _lock:
+                if data['dns'] and _dns_last_control and _dns_last_control[0] >= sampling_since:
+                    data['dns'].update(_dns_last_control[1])
                 _data.clear()
                 _data.update(data)
         # Optional monitoring cannot prevent publishing a successful sample; category is logged.
@@ -802,6 +869,174 @@ def token_valid(login, value):
 def set_blocking(enabled, seconds=None):
     with PiHole() as api:
         api.call('POST', '/api/dns/blocking', {'blocking': enabled, 'timer': seconds})
+        try:
+            return blocking_reading(api.call('GET', '/api/dns/blocking'))
+        except (OSError, ValueError, KeyError, TypeError):
+            # The POST completed. A lost readback leaves the resulting mode unknown.
+            return blocking_reading(None)
+
+
+def apply_blocking(enabled, seconds):
+    """Serialize changes, verify the timer as well as the mode, and publish the reading."""
+    global _dns_last_control
+    if not _dns_action_lock.acquire(blocking=False):
+        return 409, {'status': 'refused', 'message': 'Another DNS change is in progress.'}
+    try:
+        try:
+            reading = set_blocking(enabled, seconds)
+        except (OSError, ValueError, KeyError, TypeError):
+            return 503, {
+                'status': 'unavailable',
+                'message': 'Pi-hole did not acknowledge the change.',
+            }
+        with _lock:
+            _dns_last_control = time.monotonic(), reading
+            if _data.get('dns') is not None:
+                _data['dns'] = {**_data['dns'], **reading}
+        expected = 'enabled' if enabled else 'disabled'
+        timer = reading['timer']
+        timer_matches = (
+            timer is None if seconds is None else timer is not None and 0 < timer <= seconds
+        )
+        if reading['blocking'] == expected and timer_matches:
+            return 200, {'status': 'applied', 'message': 'Pi-hole confirmed the setting.'}
+        return 200, {'status': 'unverified', 'message': 'Pi-hole did not confirm the change.'}
+    finally:
+        _dns_action_lock.release()
+
+
+# Allowlist entries the panel or self-repair created; anything else was added in Pi-hole itself.
+PANEL_ALLOW_COMMENT = 'Allowed from the LEÓN panel'
+SELF_REPAIR_ALLOW_COMMENT = 'LEÓN self-repair: essential domain'
+BLOCKED_STATUSES = frozenset(
+    ('GRAVITY', 'REGEX', 'DENYLIST', 'GRAVITY_CNAME', 'REGEX_CNAME', 'DENYLIST_CNAME')
+)
+DOMAIN_PATTERN = re.compile(
+    r'(?=.{1,253}\Z)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z'
+)
+
+
+def client_label(client):
+    if not isinstance(client, dict):
+        return ''
+    return str(client.get('name') or client.get('ip') or '')[:100].removesuffix('.home.arpa')
+
+
+def list_label(entry):
+    comment = str(entry.get('comment') or '')
+    if comment and not comment.startswith('Migrated from'):
+        return comment.split(': ', 1)[-1][:100]
+    return str(entry.get('address', '')).removeprefix('https://').removeprefix('http://')[:100]
+
+
+def list_state(entry):
+    # Pi-hole list status: 1 updated, 2 unchanged, 3 download failed (cached copy), 4 failed.
+    if not entry.get('enabled'):
+        return 'off'
+    if entry.get('status') in (1, 2) and int(entry.get('number') or 0) > 0:
+        return 'ok'
+    return 'cached' if entry.get('status') == 3 else 'failed'
+
+
+def recent_blocked(queries, limit=30):
+    """Unique blocked domains, newest first, with the device that asked last."""
+    recent = {}
+    for row in queries:
+        domain, at = row.get('domain'), row.get('time')
+        if row.get('status') not in BLOCKED_STATUSES or not isinstance(domain, str):
+            continue
+        if type(at) not in (int, float) or not DOMAIN_PATTERN.match(domain):
+            continue
+        entry = recent.setdefault(domain, {'domain': domain, 'device': '', 'at': 0, 'count': 0})
+        entry['count'] += 1
+        if at > entry['at']:
+            entry['at'], entry['device'] = at, client_label(row.get('client'))
+    return sorted(recent.values(), key=lambda entry: -entry['at'])[:limit]
+
+
+def dns_details():
+    """The filtering page: recent blocks, allowlist, device groups and list health; None if down."""
+    try:
+        with PiHole() as api:
+            queries = api.call('GET', '/api/queries?length=400&upstream=blocklist')['queries']
+            allowed = api.call('GET', '/api/domains/allow/exact')['domains']
+            lists = api.call('GET', '/api/lists?type=block')['lists']
+            groups = api.call('GET', '/api/groups')['groups']
+            clients = api.call('GET', '/api/clients')['clients']
+            gravity = api.call('GET', '/api/stats/summary')['gravity']
+        names = {group['id']: str(group['name'])[:60] for group in groups}
+        sources = {PANEL_ALLOW_COMMENT: 'panel', SELF_REPAIR_ALLOW_COMMENT: 'selfRepair'}
+        return {
+            'recentBlocked': recent_blocked(queries),
+            'allowed': [
+                {
+                    'domain': entry['domain'],
+                    'source': sources.get(entry.get('comment'), 'other'),
+                    'addedAt': entry.get('date_added') or None,
+                }
+                for entry in allowed
+                if DOMAIN_PATTERN.match(str(entry.get('domain', '')))
+            ][:100],
+            'groups': [
+                {
+                    'name': names[group_id],
+                    'devices': sorted(
+                        str(
+                            client.get('comment')
+                            or client_label({'name': client.get('name')})
+                            or client.get('client')
+                        )[:60]
+                        for client in clients
+                        if group_id in client.get('groups', [])
+                    )[:50],
+                }
+                for group_id in sorted(names)
+                if group_id != 0
+            ][:20],
+            'lists': [
+                {
+                    'name': list_label(entry),
+                    'entries': int(entry.get('number') or 0),
+                    'state': list_state(entry),
+                    'updatedAt': entry.get('date_updated') or None,
+                    'groups': [names[g] for g in entry.get('groups', []) if g in names][:20],
+                }
+                for entry in lists
+            ][:40],
+            'listsUpdatedAt': gravity.get('last_update') or None,
+        }
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def change_allowlist(domain, allow):
+    """Add or remove one exact allow entry, then read it back; unverified is never success."""
+    if not _dns_action_lock.acquire(blocking=False):
+        return 409, {'status': 'refused', 'message': 'Another DNS change is in progress.'}
+    path = '/api/domains/allow/exact/' + urllib.parse.quote(domain, safe='')
+    try:
+        with PiHole() as api:
+            try:
+                if allow:
+                    api.call(
+                        'POST',
+                        '/api/domains/allow/exact',
+                        {'domain': domain, 'comment': PANEL_ALLOW_COMMENT},
+                    )
+                else:
+                    api.call('DELETE', path)
+            except urllib.error.HTTPError as error:
+                # Adding an existing entry or removing a missing one leaves the wanted state.
+                if error.code not in ((400, 409) if allow else (404,)):
+                    raise
+            present = bool(api.call('GET', path).get('domains'))
+    except (OSError, ValueError, KeyError, TypeError):
+        return 503, {'status': 'unavailable', 'message': 'Pi-hole did not acknowledge the change.'}
+    finally:
+        _dns_action_lock.release()
+    if present == allow:
+        return 200, {'status': 'applied', 'message': 'Pi-hole confirmed the change.'}
+    return 200, {'status': 'unverified', 'message': 'Pi-hole did not confirm the change.'}
 
 
 # ---------------------------------------------------------------- presentation data
@@ -1090,7 +1325,7 @@ def home_view(data, *, now=None):
             'topBlocked': [{'name': name, 'count': count} for name, count in dns['topBlocked'][:6]],
             'topClients': [{'name': name, 'count': count} for name, count in dns['topClients'][:6]],
         }
-        if dns
+        if dns and dns.get('blocking') in ('enabled', 'disabled')
         else None,
         'pi': {
             'temperatureCelsius': host.get('temperatureCelsius'),
@@ -2574,6 +2809,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with _lock:
                 view = home_view(_data)
             return self.reply_json(200, view)
+        if path == '/api/v1/dns':
+            with _lock:
+                view = home_view(_data)
+            return self.reply_json(200, {**view, 'filtering': dns_details()})
         if path == '/api/v1/hardware':
             with _lock:
                 data = dict(_data)
@@ -2690,7 +2929,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply(403, b'Forbidden', 'text/plain; charset=utf-8')
         if self.path.startswith('/api/v1/hardware/'):
             return self.hardware_control(login)
-        guarded = self.path.startswith('/api/v1/network/') or self.path in (
+        guarded = self.path.startswith(('/api/v1/network/', '/api/v1/dns/')) or self.path in (
             '/api/v1/automation/settings',
             '/api/v1/storage/password',
             '/api/v1/storage/eject',
@@ -2733,8 +2972,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.rfile.read(length)
             answer = eject_drive()
             return self.reply_json(200 if answer['status'] == 'ejected' else 409, answer)
-        if self.path in ('/api/v1/dns/pause', '/api/v1/dns/resume'):
-            return self.dns_blocking(login, length)
+        if self.path in ('/api/v1/dns/pause', '/api/v1/dns/resume', '/api/v1/dns/disable'):
+            return self.dns_blocking(length)
+        if self.path in ('/api/v1/dns/allow', '/api/v1/dns/unallow'):
+            return self.dns_allowlist(length)
         # /network-map/port remains for the Mac app. The other /network-map/* actions
         # are deprecated aliases of /api/v1/network/* until external clients migrate.
         if self.path in ('/network-map/port', '/api/v1/network/port'):
@@ -2808,11 +3049,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'application/json; charset=utf-8',
         )
 
-    def dns_blocking(self, login, length):
-        if not token_valid(login, self.headers.get('X-Leon-Token')):
-            return self.reply_json(
-                403, {'status': 'forbidden', 'message': 'Reload the page and try again.'}
-            )
+    def dns_blocking(self, length):
         pause = self.path == '/api/v1/dns/pause'
         try:
             content_type = (self.headers.get('Content-Type') or '').split(';', 1)[0].strip()
@@ -2827,28 +3064,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 raise ValueError
         except (ValueError, UnicodeError, RecursionError):
             return self.reply_json(400, {'status': 'invalid', 'message': 'Invalid DNS request.'})
-        try:
-            set_blocking(not pause, request.get('seconds'))
-        except (OSError, ValueError, KeyError, TypeError):
-            return self.reply_json(
-                503, {'status': 'unavailable', 'message': 'Pi-hole did not accept the change.'}
-            )
-        try:
-            dns = pihole_data()
-        except (OSError, ValueError, KeyError, TypeError):
-            dns = None  # The write may have succeeded; a failed read cannot confirm it.
-        confirmed = dns is not None and dns.get('blocking') == ('disabled' if pause else 'enabled')
-        if dns is not None:
-            with _lock:
-                _data['dns'] = dns
-        if not confirmed:
-            return self.reply_json(
-                200, {'status': 'unverified', 'message': 'Pi-hole did not confirm the change.'}
-            )
         return self.reply_json(
-            200,
-            {'status': 'applied', 'message': 'Blocking paused.' if pause else 'Blocking resumed.'},
+            *apply_blocking(self.path == '/api/v1/dns/resume', request.get('seconds'))
         )
+
+    def dns_allowlist(self, length):
+        try:
+            content_type = (self.headers.get('Content-Type') or '').split(';', 1)[0].strip()
+            if content_type != 'application/json':
+                raise ValueError
+            request = json.loads(self.rfile.read(length))
+            if not isinstance(request, dict) or set(request) != {'domain'}:
+                raise ValueError
+            domain = request['domain']
+            if not isinstance(domain, str) or not DOMAIN_PATTERN.match(domain):
+                raise ValueError
+        except (ValueError, UnicodeError, RecursionError):
+            return self.reply_json(400, {'status': 'invalid', 'message': 'Invalid domain.'})
+        return self.reply_json(*change_allowlist(domain, self.path == '/api/v1/dns/allow'))
 
     def automation_settings_json(self, login):
         try:

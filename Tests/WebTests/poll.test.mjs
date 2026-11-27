@@ -48,6 +48,21 @@ const flush = async () => {
   for (let turn = 0; turn < 8; turn++) await Promise.resolve();
 };
 
+test('an action gets a new reading when a pre-action poll is still in flight', async () => {
+  const loads = [];
+  const app = fixture(() => new Promise(resolve => loads.push(resolve)));
+  const first = app.poller.refreshAfterPending();
+  const second = app.poller.refreshAfterPending();
+  assert.equal(loads.length, 1);
+  loads[0]('enabled');
+  await flush();
+  assert.equal(loads.length, 2);
+  loads[1]('disabled');
+  await Promise.all([first, second]);
+  assert.deepEqual(app.data, ['enabled', 'disabled']);
+  app.poller.stop();
+});
+
 test('hidden pollers have no scheduled work and resume immediately', async () => {
   let reads = 0;
   const app = fixture(async () => ++reads);

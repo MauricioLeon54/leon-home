@@ -93,7 +93,7 @@ function parsePiHole(value: unknown): PiHoleView {
   const root = record(value);
   return {
     blocking: oneOf(root.blocking, ['enabled', 'paused']),
-    pausedSecondsLeft: nullableNumber(root.pausedSecondsLeft, 0, 86_400),
+    pausedSecondsLeft: nullableNumber(root.pausedSecondsLeft, 0, 2_147_483_647),
     percentBlocked: number(root.percentBlocked, 0, 100),
     queries: number(root.queries, 0, 1e12),
     blocked: number(root.blocked, 0, 1e12),

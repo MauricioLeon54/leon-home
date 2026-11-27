@@ -51,7 +51,7 @@ function homeView(overrides = {}) {
   };
 }
 
-async function start(browserType, { home, onPause } = {}) {
+async function start(browserType, { home, onPause, onBlocking } = {}) {
   const browser = await browserType.launch();
   const context = await browser.newContext({ serviceWorkers: 'block', reducedMotion: 'reduce', viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
@@ -82,7 +82,7 @@ async function start(browserType, { home, onPause } = {}) {
     const request = route.request();
     const { pathname } = new URL(request.url());
     if (pathname === '/leon/v1/session') return route.fulfill({ contentType: 'application/json', body: JSON.stringify(session) });
-    if (pathname === '/leon/v1/home') {
+    if (pathname === '/leon/v1/home' || pathname === '/leon/v1/dns') {
       const reply = await state.home(++state.homeResponses);
       return route.fulfill({ status: reply.status, contentType: 'application/json', body: typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body) });
     }
@@ -90,11 +90,15 @@ async function start(browserType, { home, onPause } = {}) {
       onPause?.(request);
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ status: 'applied' }) });
     }
+    if (pathname === '/leon/v1/dns/resume' || pathname === '/leon/v1/dns/disable') {
+      const status = onBlocking?.(pathname.endsWith('/resume'), request) ?? 'refused';
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ status }) });
+    }
     if (pathname === '/assets/leon.js' || pathname === '/assets/leon.css') {
       const name = pathname.slice('/assets/'.length);
       return route.fulfill({ contentType: name.endsWith('.css') ? 'text/css' : 'text/javascript', body: await readFile(new URL(name, directory)) });
     }
-    if (['/', '/settings', '/settings/about'].includes(pathname)) return route.fulfill({ contentType: 'text/html', headers: { 'Content-Security-Policy': policy }, body: shell });
+    if (['/', '/settings', '/settings/about', '/settings/dns'].includes(pathname)) return route.fulfill({ contentType: 'text/html', headers: { 'Content-Security-Policy': policy }, body: shell });
     return route.fulfill({ status: 404 });
   });
   return {
@@ -180,6 +184,46 @@ for (const browserType of [chromium, webkit]) {
       await app.page.getByRole('button', { name: 'Pause 5 min' }).click();
       await app.page.locator('.toast.is-applied', { hasText: 'Blocking paused for 5 min' }).waitFor();
       assert.deepEqual(posted, { token: 'token-fixture', body: { seconds: 300 } });
+      assert.deepEqual(app.errors, []);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test(`${browserType.name()} the ad blocker keeps the verified setting across Home and DNS`, async () => {
+    let enabled = true;
+    let confirm = true;
+    const writes = [];
+    const app = await start(browserType, {
+      home() {
+        const body = homeView();
+        body.pihole.blocking = enabled ? 'enabled' : 'paused';
+        return { status: 200, body };
+      },
+      onBlocking(next, request) {
+        writes.push([next, request.headers()['x-leon-token'], request.postDataJSON()]);
+        if (!confirm) return 'unverified';
+        enabled = next;
+        return 'applied';
+      },
+    });
+    try {
+      await app.page.goto('https://leon.test/');
+      const label = { name: 'Network ad blocker' };
+      await app.page.getByRole('switch', { ...label, checked: true }).click();
+      await app.page.getByRole('switch', { ...label, checked: false }).waitFor();
+      await app.page.goto('https://leon.test/settings/dns');
+      confirm = false;
+      await app.page.getByRole('switch', { ...label, checked: false }).click();
+      await app.page.locator('.toast.is-unverified').waitFor();
+      confirm = true;
+      await app.page.getByRole('switch', { ...label, checked: false }).click();
+      await app.page.getByRole('switch', { ...label, checked: true }).waitFor();
+      assert.deepEqual(writes, [
+        [false, 'token-fixture', {}],
+        [true, 'token-fixture', {}],
+        [true, 'token-fixture', {}],
+      ]);
       assert.deepEqual(app.errors, []);
     } finally {
       await app.close();

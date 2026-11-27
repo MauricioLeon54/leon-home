@@ -7,10 +7,10 @@ import { t } from '../i18n/index.js';
 import { createBanner } from '../ui/banner.js';
 import { emptyState } from '../ui/empty.js';
 import { skeleton } from '../ui/skeleton.js';
+import type { SwitchOutcome } from '../ui/switch.js';
 import { type HomeContext } from './home/context.js';
-import { pauseDns, resumeDns } from './home/dnsActions.js';
+import { pauseDns, setDnsBlocking } from './home/dnsActions.js';
 import { homeSections } from './home/layout.js';
-import { type PauseSeconds } from './home/pihole.js';
 
 const REFRESH_MS = 30_000;
 
@@ -39,7 +39,11 @@ export function renderHome(context: RouteContext): PageView {
     const homeContext: HomeContext = { isStale: state.isStale, observedAt: state.view.observedAt };
     paint(
       homeSections(state.view, homeContext, {
-        pihole: { isBusy: state.isPiHoleBusy, onPause: seconds => void pauseBlocking(seconds), onResume: () => void resumeBlocking() },
+        pihole: {
+          isBusy: state.isPiHoleBusy,
+          onPause: seconds => void runDnsAction(() => pauseDns(seconds, context.session.actionToken)),
+          setBlocking: enabled => runDnsAction(() => setDnsBlocking(enabled, context.session.actionToken)),
+        },
         network: {
           isExpanded: state.isDevicesExpanded,
           onToggle() {
@@ -50,16 +54,19 @@ export function renderHome(context: RouteContext): PageView {
       })
     );
   }
-  async function runDnsAction(request: () => Promise<void>): Promise<void> {
+  async function runDnsAction(request: () => Promise<SwitchOutcome>): Promise<SwitchOutcome> {
+    if (state.isPiHoleBusy) return 'cancelled';
     state.isPiHoleBusy = true;
     build();
-    await request();
-    state.isPiHoleBusy = false;
-    build();
-    await poller.refresh();
+    try {
+      const outcome = await request();
+      await poller.refreshAfterPending();
+      return outcome;
+    } finally {
+      state.isPiHoleBusy = false;
+      build();
+    }
   }
-  const pauseBlocking = (seconds: PauseSeconds) => runDnsAction(() => pauseDns(seconds, context.session.actionToken));
-  const resumeBlocking = () => runDnsAction(() => resumeDns(context.session.actionToken));
 
   const poller = poll({
     intervalMs: REFRESH_MS,
@@ -82,9 +89,8 @@ export function renderHome(context: RouteContext): PageView {
         return;
       }
       const ageMs = Date.now() - lastSuccessMs;
-      if (ageMs <= STALE_AFTER_MS) return;
       state.isStale = true;
-      banner.show(t('LEÓN Home is not answering. These readings are from {0} min ago.', Math.max(1, Math.round(ageMs / 60_000))));
+      if (ageMs > STALE_AFTER_MS) banner.show(t('LEÓN Home is not answering. These readings are from {0} min ago.', Math.max(1, Math.round(ageMs / 60_000))));
       build();
     },
   });

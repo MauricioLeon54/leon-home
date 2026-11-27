@@ -5,6 +5,8 @@ export const STALE_AFTER_MS = 90_000;
 export interface Poller {
   /** Load now (e.g. after an action); ignored while a load is already running. */
   refresh(): Promise<void>;
+  /** After a write, wait for any pre-write request and read again. */
+  refreshAfterPending(): Promise<void>;
   stop(): void;
 }
 
@@ -24,14 +26,20 @@ export function poll<T>({ load, intervalMs, onData, onFailure, loadImmediately =
     stopped = false,
     resumePending = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let inFlight = Promise.resolve();
 
   function schedule(): void {
     clearTimeout(timer);
     if (!stopped && !document.hidden) timer = setTimeout(() => void refresh(), intervalMs);
   }
 
-  async function refresh(): Promise<void> {
-    if (stopped || controller || document.visibilityState !== 'visible') return;
+  function refresh(): Promise<void> {
+    if (stopped || controller || document.visibilityState !== 'visible') return Promise.resolve();
+    inFlight = read();
+    return inFlight;
+  }
+
+  async function read(): Promise<void> {
     const current = new AbortController();
     controller = current;
     try {
@@ -63,6 +71,11 @@ export function poll<T>({ load, intervalMs, onData, onFailure, loadImmediately =
   else schedule();
   return {
     refresh,
+    async refreshAfterPending() {
+      if (controller) await inFlight;
+      // A concurrent caller or visibility change may already have started the new reading.
+      return controller ? inFlight : refresh();
+    },
     stop() {
       stopped = true;
       clearTimeout(timer);

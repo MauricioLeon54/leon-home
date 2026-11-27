@@ -53,7 +53,7 @@ export function livePage<T>({ path, parse, intervalMs, observedAt, build, reuseR
         return await work();
       } finally {
         busy--;
-        await poller.refresh();
+        await poller.refreshAfterPending();
         paint();
       }
     },
