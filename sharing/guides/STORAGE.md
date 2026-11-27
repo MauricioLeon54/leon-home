@@ -149,7 +149,9 @@ full-size poster (`upnp:albumArtURI`, which VLC also reads) and the LEÓN icon.
    same server. Use `--scan timed` for a network mount. Tailscale grants keep port 8200 closed to
    other tailnet devices.
 
-3. Install `sharing/storage/dlna-icons/*` to `/usr/local/share/leon-dlna/icons/` and
+3. Install `sharing/storage/dlna-icons/*` to `/usr/local/share/leon-dlna/icons/`,
+   `sharing/storage/dlna-js/leon-video.js` to `/usr/local/share/leon-dlna/js/` (it keeps every
+   video in one list; Gerbera 2.4 otherwise adds a "Year" folder of file dates) and
    `sharing/storage/gerbera-storage.conf` as
    `/etc/systemd/system/gerbera.service.d/10-leon-storage.conf`. So that connecting the drive
    starts the server, link `/usr/lib/systemd/system/gerbera.service` (and `smbd.service`) into

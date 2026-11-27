@@ -18,6 +18,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 INTERFACE = re.compile(r'[a-z][a-z0-9]{0,14}')
 LIBRARY = re.compile(r'/srv/[A-Za-z0-9 _./()-]+')
+SCRIPTS = '/usr/local/share/leon-dlna/js'
 VISIBLE_BOXES = {'Video/videoRoot': 'Películas', 'Video/allVideo': 'Todas las películas'}
 IMAGE_EXTENSIONS = ('jpg', 'jpeg', 'png')
 
@@ -58,6 +59,12 @@ def configuration(default, name, library, interface, port, udn, scan):
     # The JavaScript layout creates folders only for imported media; the built-in one always
     # shows empty Audio and Photos folders.
     text = replace_once(text, '<virtual-layout type="builtin"', '<virtual-layout type="js"')
+    # dlna-js/leon-video.js (installed in SCRIPTS) keeps every video in one list.
+    text = replace_once(
+        text,
+        '<common>/usr/share/gerbera/js</common>',
+        f'<common>/usr/share/gerbera/js</common><custom>{SCRIPTS}</custom>',
+    )
     mode = 'mode="inotify"' if scan == 'inotify' else 'mode="timed" interval="86400"'
     text = replace_once(
         text,

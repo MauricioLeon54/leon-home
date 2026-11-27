@@ -40,6 +40,8 @@ class DlnaConfigurationTests(unittest.TestCase):
         self.assertEqual(server.find('g:ui', NS).get('enabled'), 'no')
         self.assertEqual(server.find('g:pc-directory', NS).get('upnp-hide'), 'yes')
         self.assertEqual(root.find('g:import/g:scripting/g:virtual-layout', NS).get('type'), 'js')
+        folders = root.find('g:import/g:scripting/g:script-folder', NS)
+        self.assertEqual(folders.find('g:custom', NS).text, '/usr/local/share/leon-dlna/js')
         directory = root.find('g:import/g:autoscan/g:directory', NS)
         self.assertEqual(directory.get('location'), '/srv/leon-storage/PELICULAS')
         self.assertEqual(directory.get('mode'), 'inotify')

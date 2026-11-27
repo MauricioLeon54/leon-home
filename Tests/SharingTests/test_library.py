@@ -44,6 +44,16 @@ class GuessTests(unittest.TestCase):
         self.assertEqual(library.guess('1917.2019.1080p.mkv'), ('1917', '2019', ''))
         self.assertEqual(library.guess('Oppenheimer.2023.CAM.mp4'), ('Oppenheimer', '2023', 'CAM'))
         self.assertEqual(library.guess('Video de la boda.mp4'), ('Video de la boda', None, ''))
+        self.assertEqual(
+            library.guess('Cat.Cam.2026.1080p.WEBRip.LAT.mp4'), ('Cat Cam', '2026', '')
+        )
+        self.assertEqual(
+            library.guess('Mini.Espías.3-2003.1080P-Dual-Lat.mkv'), ('Mini Espías 3', '2003', '')
+        )
+        self.assertEqual(
+            library.guess('Coyote.Vs.Acme.2026.WEB-DL.4k.HDR-Dual-Lat.mkv'),
+            ('Coyote Vs Acme', '2026', '4K'),
+        )
 
     def test_confirm_needs_same_year_and_similar_title(self):
         payload = {

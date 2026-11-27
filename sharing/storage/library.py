@@ -65,11 +65,6 @@ def parse_folder(name):
 def guess(name):
     """(title, year, tag) from an upload name such as `The.Movie.2019.2160p.WEB.mkv`; year may be None."""
     stem = re.sub(r'\.[A-Za-z0-9]{2,4}$', '', name)
-    tag = ''
-    if re.search(r'\b(2160p|4k|uhd)\b', stem, re.IGNORECASE):
-        tag = '4K'
-    elif re.search(r'\b(cam|hdcam|telesync)\b', stem, re.IGNORECASE):
-        tag = 'CAM'
     text = re.sub(r'\[[^\]]*\]|\{[^}]*\}', ' ', stem)  # [group] and {site} labels
     text = re.sub(
         r'^\s*(www\.)?[a-z0-9-]+\.(com|net|org|to|mx)\s*-\s*', ' ', text, flags=re.IGNORECASE
@@ -82,6 +77,13 @@ def guess(name):
     cut = year.start() if year else (noise.start() if noise else len(text))
     title = re.sub(r'[\s(\[\-\u2013]+$', '', text[:cut]).strip(' -\u2013')
     title = re.sub(r'\s{2,}', ' ', title)
+    # Release labels come after the year, so a title such as "Cat Cam" is not a cinema recording.
+    labels = text[year.end() :] if year else text[cut:]
+    tag = ''
+    if re.search(r'\b(2160p|4k|uhd)\b', labels, re.IGNORECASE):
+        tag = '4K'
+    elif re.search(r'\b(cam|hdcam|telesync)\b', labels, re.IGNORECASE):
+        tag = 'CAM'
     return title, (year.group(1) if year else None), tag
 
 
@@ -193,8 +195,9 @@ def is_settled(entry, now):
 
 
 class Organizer:
-    def __init__(self, library, token, language, journal):
+    def __init__(self, library, token, language, journal, *, dry_run=False):
         self.library, self.token, self.language, self.journal = library, token, language, journal
+        self.dry_run = dry_run
         self.renamed, self.review = [], []
 
     def note(self, name, reason, suggestion=None):
@@ -247,6 +250,9 @@ class Organizer:
         target = folder / f'{base}.{extension(video)}'
         if target.exists():
             return self.note(entry.name, 'This movie is already in the library.', name)
+        if self.dry_run:
+            self.renamed.append(f'{entry.name} -> {target.relative_to(self.library)}')
+            return None
         self.move(entry, video, folder, base, target)
         return None
 
@@ -306,6 +312,10 @@ def add_covers(library, token, language, limit):
             continue
         try:
             poster = pick_poster_path(search(*parsed, token, language))
+            if not poster and ' - ' in parsed[0]:
+                # "Saga - Subtitle (Year)": the saga name and year usually find the one movie.
+                saga = parsed[0].split(' - ', 1)[0]
+                poster = pick_poster_path(search(saga, parsed[1], token, language))
             if not poster:
                 unmatched.append(folder.name)
                 continue
@@ -353,6 +363,9 @@ def main():
     )
     parser.add_argument('--no-organize', action='store_true', help='only add posters')
     parser.add_argument(
+        '--dry-run', action='store_true', help='print planned names; change nothing'
+    )
+    parser.add_argument(
         '--state', type=Path, help='JSON summary for the panel; the journal of moves sits beside it'
     )
     parser.add_argument('--changed-flag', type=Path, help='file to create when the library changed')
@@ -367,9 +380,15 @@ def main():
         sys.exit(f'{args.library} is not a folder (is the drive mounted?).')
 
     journal = args.state.with_name('moves.jsonl') if args.state else None
-    organizer = Organizer(args.library, token, args.language, journal)
+    organizer = Organizer(args.library, token, args.language, journal, dry_run=args.dry_run)
     if not args.no_organize:
         organizer.run(time.time())
+    if args.dry_run:
+        for line in organizer.renamed:
+            print(f'would organize: {line}')
+        for item in organizer.review:
+            print(f'needs a name: {item["name"]}: {item["reason"]} {item["suggestion"] or ""}')
+        return 0
     added, failed = add_covers(args.library, token, args.language, args.limit)
 
     for name in organizer.renamed:

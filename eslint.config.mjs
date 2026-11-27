@@ -64,4 +64,16 @@ export default [
     },
   },
   { files: ['*.mjs', 'scripts/**/*.mjs', 'Tests/WebTests/**/*.mjs'], languageOptions: { globals: globals.node } },
+  {
+    // Gerbera layout scripts: Duktape runs ES5 scripts that override common.js functions.
+    files: ['sharing/storage/dlna-js/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 5,
+      sourceType: 'script',
+      globals: Object.fromEntries(
+        ['config', 'addCdsObject', 'addContainerTree', 'BK_videoRoot', 'BK_videoAll', 'M_CONTENT_CLASS', 'OBJECT_TYPE_CONTAINER', 'UPNP_CLASS_VIDEO_ITEM'].map(name => [name, 'readonly'])
+      ),
+    },
+    rules: { 'no-var': 'off', 'no-unused-vars': ['error', { vars: 'local', args: 'none' }] },
+  },
 ];

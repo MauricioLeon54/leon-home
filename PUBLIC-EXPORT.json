@@ -151,7 +151,7 @@
     "docs/WEB-DESIGN.md": "1e9691a702fdf1219d23b46e0f1ae55cee7c73f452daf6ff25421311272d39f5",
     "docs/assets/readme-header.png": "b8841a12c2f15f3a884aadb18890c410d09eea31a21d2088e09af64d9d6e324a",
     "docs/assets/readme-header.svg": "3b3efe52c7099ec0e928b581958babf6b6fb60fe6fcb9f88afdb2c42c6f72b4b",
-    "eslint.config.mjs": "1e8e673ebdc3f3200724a0635adc39a277405cfb0327352805a728c67cafa4fc",
+    "eslint.config.mjs": "0c736f9d8a3d99e948f080fbc11adf9e106d58bedef16f36ec870f9ce8dd1688",
     "package.json": "1ef2b449dd74bd0278ba476860de1578afe070d9d27983246654ec0ace35d270",
     "pnpm-lock.yaml": "7c7235845ad03b4130553365c277004615f83b6ea7cc34bb48c495c3529f3a1d",
     "pnpm-workspace.yaml": "6898518cf079d134469bf440ea3569655da26d86bf0abb7dffc2d98c3f31a697",
@@ -178,7 +178,7 @@
     "sharing/family.py": "f4add9a9c5bcd1f0730b3b2f14ed7faf05ecc106af6e09e6a9bda209ecba367e",
     "sharing/guides/INSTALL-ES.md": "f7256356bd84fe16fbcb8d34f26f3f5d9d4f1335ae98b888ee2050b5a76478ab",
     "sharing/guides/INSTALL.md": "a1d1a99e2e34a42bd45e224ca1f35b0d38991ee1f0d2fa0c5213aa0ee1e18e44",
-    "sharing/guides/STORAGE.md": "e3acdd8c9ece76a32141c69cd6a0980ef3d41782d6903e3f42d105e10d3ad696",
+    "sharing/guides/STORAGE.md": "a7b4be12356df97fcd0e2af1f81693316330b9b3c8b76f7a3e660e7eeff94e17",
     "sharing/guides/TAILSCALE-ES.md": "3d71fa0f25c126f15da5c84ad3a610573b996a6e7fc14bfdd8f43d9a21ceca38",
     "sharing/guides/TAILSCALE.md": "ebe0e0680ebeac90cde7d6caf1e30911615eb10a6f08a64320a9cd413e390815",
     "sharing/guides/UPDATES-ES.md": "af1d15d3eef90e53474a67512c02ea2a2b4d04c357c10d12fb640a1bad3a2e96",
@@ -216,8 +216,8 @@
     "tsconfig.web.json": "e4ea87b37ebfb6cb1ec949407466926443c26d5377991e183375ca34dea49dd2",
     "tsconfig.worker.json": "2bb051145a4a01fb39543e9da8f74063fe15ba4651bb730b137959505d000304",
     "Tests/Fixtures/gerbera/default-2.4.xml": "f2e296ce01171a9b80f64d1bb78f953376a849383629cc975f14b290bc06a19e",
-    "Tests/SharingTests/test_dlna_config.py": "3d1769694e8e7aca0ee23fade9d44d267dcab05b0665ed90af652c35d22aa708",
-    "Tests/SharingTests/test_library.py": "de64ff560ddf99fefba0bab3de8eb111c0410490d43b9db20801c6ea5285b5be",
+    "Tests/SharingTests/test_dlna_config.py": "2145007e2546ec125841521c013ecd7834108de0e60e93f910d1f5e631d7dc07",
+    "Tests/SharingTests/test_library.py": "2cf7c4f7a0aa5f29211f86123f8ec8b9dad5fbd36a987a4604cb1755eed93e23",
     "Tests/WebTests/movies.test.mjs": "f0fe1b46858e01ff97354930bc2f4131da0ac49b6611c1dcf4229abc119218d6",
     "deploy/leon-home/files/usr/local/lib/leon-overview/web/src/pages/storage/movies.ts": "0988da123c377355448124f5e3c801c5992c5ae6aa1bc24e8532621c679e467b",
     "deploy/leon-home/files/usr/local/lib/leon-overview/web/styles/pages/_movies.scss": "21c507fc9021c0e35b435dbc35b68c92589067fa802a1534239fbbc438087c4d",
@@ -231,11 +231,12 @@
     "sharing/storage/dlna-icons/mt-icon48.jpg": "b652aa4702efa2a11771c47f8b54ba02f7c348abe7813cfc04f0b8e63419e811",
     "sharing/storage/dlna-icons/mt-icon48.png": "34104537ca7c07ac2bb133c33ef5c0296a39d91f3889282d182c1855a00fccc3",
     "sharing/storage/dlna-rebuild.sh": "0307a55117015e1658ffbd4f4a2114a27fa8cc84aeadee515b87c9837daf59c9",
-    "sharing/storage/dlna_config.py": "52deefd703fdcf807877818bae05d87861de322c56d86c81a797627526df86ba",
+    "sharing/storage/dlna_config.py": "abb5f0ddd0d2375dc22f68d203a5732bfc966b0769ab605d1d6f7c84470de59a",
     "sharing/storage/gerbera-storage.conf": "666585792a0e65b98ffe49b3b904a357b980f78447ef70cc0ac12ac432197d43",
     "sharing/storage/leon-storage-library.path": "201893effdbad54c788d896211e76bb5bca9e82e630cfffa9ab29cffce1eea4a",
     "sharing/storage/leon-storage-library.service": "085a216b8646f1584978555dd34e1bd1fe40f56a274f0de6f00f758e5c6f653b",
     "sharing/storage/leon-storage-library.timer": "14bc2b4a141c938369a3b31e5e2c568414c4b0170f8e74629d3bfb4857d18fee",
-    "sharing/storage/library.py": "6a023bc52d98e2d1914c8a7223564823f7ca8d5d49e3439734b810a4219fa5cb"
+    "sharing/storage/library.py": "0505f8bdc3d431e3270d9166743d79a2dfcaa8fde184ca9bdc2456dcf1032ef0",
+    "sharing/storage/dlna-js/leon-video.js": "6d7251ea78c27e8932ec23d00e28bf2ecb5eb06fc6091571b79dcf9353328a5c"
   }
 }
